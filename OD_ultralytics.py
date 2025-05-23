@@ -9,10 +9,11 @@ from pathlib import Path
 from collections import Counter
 from ultralytics import YOLO
 import numpy as np # Required for image manipulation
+import csv # For exporting data to CSV
 
 # --- Configuration ---
 # TODO: Update this path if your main dataset directory is different
-INPUTS_DIR = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v34i.yolov5pytorch"  # Base directory containing variant subfolders (e.g., hard, easy) and data.yaml
+INPUTS_DIR = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v37i.yolov5pytorch"  # Base directory containing variant subfolders (e.g., hard, easy) and data.yaml
 IMAGE_SUBDIR_BASENAME = "images"  # Basename of the image subdirectory within each variant folder
 LABEL_SUBDIR_BASENAME = "labels"  # Basename of the label subdirectory within each variant folder
 ORIGINAL_DATA_YAML_NAME = "data.yaml" # Name of your existing data.yaml with class names, located in INPUTS_DIR
@@ -22,10 +23,10 @@ OUTPUT_DIR = "yolo_experiment_output"      # Directory to save YAML, results, et
 DATASET_YAML_NAME = "custom_dataset_for_training.yaml" 
 INCORRECT_PREDICTIONS_SUBDIR = "incorrect_predictions" # Subfolder for saving incorrect predictions
 LOG_FILE_NAME = "script_run.log" # Name of the log file
-
+PREDICTIONS_CSV_NAME = "predictions_summary.csv" # Name for the CSV output file
 # MODEL_NAME = "yolov8n.pt" # You can change this to other YOLOv11 variants like 'yolov11s.pt' etc.
 MODEL_NAME = "best.pt" # You can change this to other YOLOv11 variants like 'yolov11s.pt' etc.
-EPOCHS = 0 # Number of training epochs. If 0, training is skipped, and MODEL_NAME is loaded for prediction.
+EPOCHS = 10 # Number of training epochs. If 0, training is skipped, and MODEL_NAME is loaded for prediction.
 IMG_SIZE = 640 # Image size for training
 
 # --- Train/Validation/Test Split Ratios ---
@@ -377,7 +378,7 @@ def draw_all_annotations(image_np, pred_boxes, gt_annotations, class_names_map):
             
             # Get color for prediction using the BOX_COLOR_MAP
             # Convert class_name to lowercase for robust matching with BOX_COLOR_MAP keys
-            color = BOX_COLOR_MAP.get(class_name.lower(), DEFAULT_BOX_COLOR)
+            color = BOX_COLOR_MAP.get(class_name.lower().strip(), DEFAULT_BOX_COLOR) # Added .strip() here for safety too
 
             # Draw the rectangle for the prediction
             cv2.rectangle(image_np, (x1, y1), (x2, y2), color, pred_box_thickness)
@@ -410,7 +411,7 @@ def draw_all_annotations(image_np, pred_boxes, gt_annotations, class_names_map):
 
             class_name = class_names_map.get(class_id, f"ID_{class_id}")
             # Get color for ground truth using the BOX_COLOR_MAP
-            gt_color = BOX_COLOR_MAP.get(class_name.lower(), DEFAULT_BOX_COLOR) # Fallback to default if GT class not in map
+            gt_color = BOX_COLOR_MAP.get(class_name.lower().strip(), DEFAULT_BOX_COLOR) # Added .strip() here for safety too
 
             cv2.rectangle(image_np, (x1, y1), (x2, y2), gt_color, gt_box_thickness)
 
@@ -477,7 +478,7 @@ def main():
 
     if names_list_from_file is not None: # Successfully loaded names from data.yaml (could be an empty list)
         logger.info(f"Successfully loaded {len(names_list_from_file)} class names from '{original_data_yaml_abs_path}'.")
-        class_names_map = {i: str(name) for i, name in enumerate(names_list_from_file)}
+        class_names_map = {i: str(name).strip() for i, name in enumerate(names_list_from_file)}
         num_classes = len(names_list_from_file)
 
         # Optional: Validate against actual labels found, only if label dirs were discovered
@@ -590,6 +591,8 @@ def main():
                 imgsz=IMG_SIZE,
                 project=str(project_base_dir),
                 name=training_run_name,
+                optimizer='Adam',
+                lr0=0.0001, # Initial learning rate
                 exist_ok=False, # Set to True if you want to overwrite existing runs with the same name, False to create new (e.g., run_name2)
                 **AUGMENTATION_PARAMS
             )
@@ -684,11 +687,15 @@ def main():
 
     logger.info(f"Found {len(all_image_label_pairs)} total image-label pairs for comparison.")
     incorrect_prediction_count = 0
+    
+    # --- NEW: Initialize list to store data for CSV export ---
+    prediction_data_for_csv = []
 
     try:
         # --- MODIFIED PREDICTION LOOP START ---
         for image_abs_path, label_abs_path in all_image_label_pairs:
-            logger.info(f"  Processing: {image_abs_path.relative_to(inputs_dir_pathobj)}")
+            # --- Added detailed logging for current image ---
+            logger.info(f"--- Processing image for prediction: {image_abs_path.name} ---")
             
             # Load the original image using OpenCV
             image_to_draw_on = cv2.imread(str(image_abs_path))
@@ -705,10 +712,29 @@ def main():
             if pred_results_list:
                 r = pred_results_list[0]
                 # Manually draw predicted boxes onto our loaded image
-                if r.boxes:
-                    current_pred_boxes = r.boxes 
+                if r.boxes and len(r.boxes) > 0: # Check if there are any detected boxes
+                    current_pred_boxes = r.boxes
                     predicted_class_counts = Counter(int(cls_id) for cls_id in r.boxes.cls.tolist())
 
+                    # --- NEW: Log class names and probabilities for each detection ---
+                    logger.info(f"  Detected objects in {image_abs_path.name}:")
+                    for i in range(len(r.boxes)):
+                        class_id = int(r.boxes.cls[i])
+                        confidence = float(r.boxes.conf[i])
+                        # Using the class_names_map loaded from your data.yaml or generated
+                        class_name_str = class_names_map.get(class_id, f"Unknown_ID_{class_id}")
+                        logger.info(f"    - Class: {class_name_str}, Probability: {confidence:.4f}")
+                        # --- NEW: Append data for CSV ---
+                        prediction_data_for_csv.append([image_abs_path.name, class_name_str, f"{confidence:.4f}"])
+                else:
+                    logger.info(f"  No objects detected by the model in {image_abs_path.name}.")
+                    # --- NEW: Add entry for no detections if desired, or skip ---
+                    prediction_data_for_csv.append([image_abs_path.name, "None", "N/A"]) # Optional
+            else:
+                logger.info(f"  Prediction did not return results for {image_abs_path.name}.")
+                # --- NEW: Add entry for no results if desired, or skip ---
+                prediction_data_for_csv.append([image_abs_path.name, "Error/NoResult", "N/A"]) # Optional
+            
             ground_truth_annotations = parse_yolo_annotations(label_abs_path)
             ground_truth_class_counts = Counter(ann[0] for ann in ground_truth_annotations)
 
@@ -718,9 +744,12 @@ def main():
                 logger.info(f"      GT counts: {dict(ground_truth_class_counts)}")
                 logger.info(f"      Pred counts: {dict(predicted_class_counts)}")
 
+                # Prepare image for drawing - start with a fresh copy of the original
+                image_with_all_annotations = image_to_draw_on.copy()
+
                 # Draw all annotations (predicted then ground truth)
                 image_with_all_annotations = draw_all_annotations(
-                    image_to_draw_on.copy(), # Pass a fresh copy of the original image
+                    image_with_all_annotations, 
                     current_pred_boxes, 
                     ground_truth_annotations, 
                     class_names_map
@@ -739,9 +768,29 @@ def main():
                         logger.info(f"      Saved comparison image to {destination_path}")
                     except Exception as e:
                         logger.error(f"      Failed to save comparison image for {image_abs_path.name}: {e}")
-        # --- MODIFIED PREDICTION LOOP END ---
+        # --- PREDICTION LOOP END ---
 
         logger.info(f"Total incorrect predictions (by class counts): {incorrect_prediction_count} out of {len(all_image_label_pairs)} images.")
+
+        # --- NEW: Write collected prediction data to CSV ---
+        if current_run_dir and prediction_data_for_csv:
+            csv_file_path = current_run_dir / PREDICTIONS_CSV_NAME
+            try:
+                with open(csv_file_path, 'w', newline='') as csvfile:
+                    csv_writer = csv.writer(csvfile)
+                    # Write header
+                    csv_writer.writerow(['Image Filename', 'Detected Class', 'Probability'])
+                    # Write data rows
+                    csv_writer.writerows(prediction_data_for_csv)
+                logger.info(f"Prediction summary saved to CSV: {csv_file_path}")
+            except Exception as e:
+                logger.error(f"Error writing prediction summary to CSV {csv_file_path}: {e}")
+        elif not prediction_data_for_csv:
+            logger.info("No prediction data collected to write to CSV.")
+        elif not current_run_dir:
+            logger.warning("Cannot write prediction CSV: Run directory not identified.")
+        # --- END CSV WRITING ---
+
 
     except Exception as e:
         logger.exception("An error occurred during prediction and comparison loop:")
