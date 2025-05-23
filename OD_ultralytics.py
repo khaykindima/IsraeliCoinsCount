@@ -25,7 +25,7 @@ INCORRECT_PREDICTIONS_SUBDIR = "incorrect_predictions" # Subfolder for saving in
 LOG_FILE_NAME = "script_run.log" # Name of the log file
 PREDICTIONS_CSV_NAME = "predictions_summary.csv" # Name for the CSV output file
 # MODEL_NAME = "yolov8n.pt" # You can change this to other YOLOv11 variants like 'yolov11s.pt' etc.
-MODEL_NAME = "best.pt" # You can change this to other YOLOv11 variants like 'yolov11s.pt' etc.
+MODEL_NAME = "yolov8n_best.pt" # You can change this to other YOLOv11 variants like 'yolov11s.pt' etc.
 EPOCHS = 0 # Number of training epochs. If 0, training is skipped, and MODEL_NAME is loaded for prediction.
 IMG_SIZE = 640 # Image size for training
 
@@ -58,6 +58,14 @@ AUGMENTATION_PARAMS = {
 # --- Prediction Settings ---
 IOU_SUPPRESSION_THRESHOLD = 0.4 # Threshold for custom inter-class suppression
 BOX_MATCHING_IOU_THRESHOLD = 0.5 # IoU threshold to consider a predicted box as "correct" if class also matches GT
+DEFAULT_CONF_THRESHOLD = 0.25 # Default confidence if not specified per class
+PER_CLASS_CONF_THRESHOLDS = {
+    "one": 0.35,    # Example: Higher threshold for "one"
+    "two": 0.45,    # Example: Lower threshold for "two"
+    "five": 0.35,   # Example: Higher threshold for "five"
+    "ten": 0.8,    # Example: Moderate threshold for "ten"
+    # Add other class names (lowercase) and their desired thresholds here
+}
 
 # --- Logger Setup ---
 # Get a logger instance (this will be the root logger if name is not specified,
@@ -692,7 +700,7 @@ def main():
                     logger.error(f"    Failed to read image {image_abs_path}. Skipping.")
                     continue
 
-                pred_results_list = predict_model_instance.predict(source=image_to_draw_on.copy(), save=False, verbose=False)
+                pred_results_list = predict_model_instance.predict(source=image_to_draw_on.copy(), save=False, verbose=False, conf=DEFAULT_CONF_THRESHOLD)
                 
                 raw_predictions_data = [] # Store as list of dicts: {'xyxy', 'conf', 'cls'}
                 if pred_results_list and pred_results_list[0].boxes:
@@ -703,25 +711,34 @@ def main():
                             'conf': float(r_boxes.conf[i]),
                             'cls': int(r_boxes.cls[i])
                         })
+                
+                # --- Apply Per-Class Confidence Thresholds ---
+                thresholded_predictions = []
+                for pred_item in raw_predictions_data:
+                    class_name = class_names_map.get(pred_item['cls'], "").lower().strip()
+                    conf_thresh = PER_CLASS_CONF_THRESHOLDS.get(class_name, DEFAULT_CONF_THRESHOLD)
+                    if pred_item['conf'] >= conf_thresh:
+                        thresholded_predictions.append(pred_item)
+                # --- End Per-Class Confidence Thresholding ---
 
                 # --- Custom Inter-class Suppression (based on IoU and confidence) ---
-                suppressed_flags = [False] * len(raw_predictions_data)
-                for i in range(len(raw_predictions_data)):
+                suppressed_flags = [False] * len(thresholded_predictions)
+                for i in range(len(thresholded_predictions)):
                     if suppressed_flags[i]:
                         continue
-                    for j in range(i + 1, len(raw_predictions_data)):
+                    for j in range(i + 1, len(thresholded_predictions)):
                         if suppressed_flags[j]:
                             continue
-                        iou = calculate_iou(raw_predictions_data[i]['xyxy'], raw_predictions_data[j]['xyxy'])
+                        iou = calculate_iou(thresholded_predictions[i]['xyxy'], thresholded_predictions[j]['xyxy'])
                         if iou > IOU_SUPPRESSION_THRESHOLD: # If IoU is high, suppress the one with lower confidence
-                            if raw_predictions_data[i]['conf'] >= raw_predictions_data[j]['conf']:
+                            if thresholded_predictions[i]['conf'] >= thresholded_predictions[j]['conf']:
                                 suppressed_flags[j] = True
                             else:
                                 suppressed_flags[i] = True
                                 break # Box i is suppressed, no need for it to suppress others
 
                 filtered_predictions = []
-                for idx, p_data in enumerate(raw_predictions_data):
+                for idx, p_data in enumerate(thresholded_predictions):
                     if not suppressed_flags[idx]:
                         filtered_predictions.append(p_data) # Keep the original dict structure
                 
@@ -772,7 +789,7 @@ def main():
                 
                 # Sort back to original order if necessary, or just use final_predictions_with_status for logging/CSV
                 # For simplicity, we'll log based on the order in final_predictions_with_status (which is confidence sorted)
-                logger.info(f"  Detected objects in {image_abs_path.name} (after suppression & matching):")
+                logger.info(f"  Detected objects in {image_abs_path.name} (after all filters & matching):")
                 if final_predictions_with_status:
                     for pred_item_with_status in final_predictions_with_status:
                         predicted_class_name = class_names_map.get(pred_item_with_status['cls'], f"ID_{pred_item_with_status['cls']}")
@@ -787,7 +804,7 @@ def main():
                             box_correctness_status_for_csv
                         ])
                 else:
-                    logger.info("    No objects detected after suppression.")
+                    logger.info("    No objects detected after all filters.")
                 
                 # --- Determine if image is incorrect for saving ---
                 num_false_positives = len(filtered_predictions) - num_true_positives_for_image
