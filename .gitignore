@@ -2,3 +2,4 @@
 /Data/
 /runs/
 /yolo_experiment_output/
+/__pycache__/

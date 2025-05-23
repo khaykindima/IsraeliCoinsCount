@@ -1,0 +1,8 @@
+name: ultralytics
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - yaml
+  - ipykernel
+prefix: /home/dima/miniconda3/envs/ultralytics
