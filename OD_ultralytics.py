@@ -378,19 +378,16 @@ def calculate_iou(box1_xyxy, box2_xyxy):
     iou = intersection_area / union_area if union_area > 0 else 0.0
     return iou
 
-def draw_all_annotations(image_np, filtered_pred_data_list, gt_annotations, class_names_map):
+def draw_all_annotations(image_np, fp_predictions_to_draw, fn_gt_to_draw, class_names_map):
     """
-    Draws filtered predicted and ground truth bounding boxes and labels on an image.
+    Draws specified False Positive predictions and False Negative Ground Truth boxes.
     Args:
         image_np (np.ndarray): The image to draw on.
-        filtered_pred_data_list (list): List of dictionaries, each containing {'xyxy', 'conf', 'cls'}
-                                       and optionally 'correctness_status' (though not used for drawing label text here).
-                                       Can be None or empty.
-        gt_annotations (list): A list of tuples from parse_yolo_annotations.
-                               Can be empty if no ground truth.
+        fp_predictions_to_draw (list): List of prediction dicts {'xyxy', 'conf', 'cls'} that are FPs.
+        fn_gt_to_draw (list): List of GT dicts {'cls', 'xyxy'} that are FNs (missed GTs).
         class_names_map (dict): Dictionary mapping class ID (int) to class name (str).
     Returns:
-        np.ndarray: The image with all annotations drawn.
+        np.ndarray: The image with specified error annotations drawn.
     """
     img_h, img_w = image_np.shape[:2]
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -406,19 +403,21 @@ def draw_all_annotations(image_np, filtered_pred_data_list, gt_annotations, clas
     DEFAULT_BOX_COLOR = (255, 0, 0) # Blue for any other classes not in map
 
 
-    # --- Draw Filtered Predicted Boxes ---
-    if filtered_pred_data_list:
+    # --- Draw False Positive Predicted Boxes ---
+    if fp_predictions_to_draw:
         pred_font_scale = 1.5 # Font scale for prediction text
         pred_text_thickness = 4 # Thickness for text, must be an integer
         pred_box_thickness = 2 # Thickness for box lines, must be an integer
 
-        for pred_data in filtered_pred_data_list:
+        for pred_data in fp_predictions_to_draw:
+            # This condition is now handled before calling this function
+            # if pred_data.get('correctness_status') == "Incorrect (FP)":
             x1, y1, x2, y2 = map(int, pred_data['xyxy'])
             class_id = int(pred_data['cls'])
             confidence = float(pred_data['conf'])
-
+            
             class_name = class_names_map.get(class_id, f"ID_{class_id}")
-            label = f"{class_name} {confidence:.2f}"
+            label = f"FP: {class_name} {confidence:.2f}" # Indicate it's a False Positive
             
             # Get color for prediction using the BOX_COLOR_MAP
             # Convert class_name to lowercase for robust matching with BOX_COLOR_MAP keys
@@ -440,27 +439,22 @@ def draw_all_annotations(image_np, filtered_pred_data_list, gt_annotations, clas
             cv2.rectangle(image_np, (label_x_pos, label_y_pos - text_h - baseline), (label_x_pos + text_w, label_y_pos + baseline), color, -1)
             cv2.putText(image_np, label, (label_x_pos, label_y_pos), font, pred_font_scale, text_color_on_bg, pred_text_thickness, cv2.LINE_AA)
 
-    # --- Draw Ground Truth Boxes ---
-    if gt_annotations:
+    # --- Draw Missed Ground Truth Boxes (False Negatives) ---
+    if fn_gt_to_draw: # This list now only contains GTs that were NOT matched (FNs)
         gt_font_scale = 1.4 # Font scale for ground truth text
         gt_text_thickness = 3 # Thickness for text, must be integer
         gt_box_thickness = 2 # Thickness for box lines, must be integer
 
 
-        for ann in gt_annotations:
-            class_id, x_center, y_center, width, height = ann
-            abs_x_center, abs_y_center = x_center * img_w, y_center * img_h
-            abs_width, abs_height = width * img_w, height * img_h
-            x1_gt, y1_gt = int(abs_x_center - abs_width / 2), int(abs_y_center - abs_height / 2)
-            x2_gt, y2_gt = int(x1_gt + abs_width), int(y1_gt + abs_height)
-
+        for gt_data in fn_gt_to_draw: # gt_data is a dict like {'cls', 'xyxy'}
+            x1_gt, y1_gt, x2_gt, y2_gt = map(int, gt_data['xyxy'])
+            class_id = gt_data['cls']
             class_name = class_names_map.get(class_id, f"ID_{class_id}")
             # Get color for ground truth using the BOX_COLOR_MAP
-            gt_color = BOX_COLOR_MAP.get(class_name.lower().strip(), DEFAULT_BOX_COLOR) # Added .strip() here for safety too
+            gt_color = BOX_COLOR_MAP.get(class_name.lower().strip(), DEFAULT_BOX_COLOR)
 
             cv2.rectangle(image_np, (x1_gt, y1_gt), (x2_gt, y2_gt), gt_color, gt_box_thickness)
-
-            label = f"GT: {class_name}"
+            label = f"GT: {class_name}" 
             (text_w, text_h), baseline = cv2.getTextSize(label, font, gt_font_scale, gt_text_thickness)
             
             text_margin = 3
@@ -473,8 +467,8 @@ def draw_all_annotations(image_np, filtered_pred_data_list, gt_annotations, clas
     # --- Draw Legend ---
     legend_font_scale = 0.5
     # Position legend at the bottom of the image
-    cv2.putText(image_np, "Predictions (Custom Colors, Top-Left)", (10, img_h - 40), font, legend_font_scale, (220, 220, 220), 1, cv2.LINE_AA) # Light gray for better visibility
-    cv2.putText(image_np, "Ground Truth (Custom Colors, Inside Top-Right)", (10, img_h - 20), font, legend_font_scale, (220,220,220), 1, cv2.LINE_AA) # Also light gray for consistency
+    cv2.putText(image_np, "False Positive Preds (Custom Colors, Top-Left)", (10, img_h - 40), font, legend_font_scale, (220, 220, 220), 1, cv2.LINE_AA)
+    cv2.putText(image_np, "Ground Truth (Missed) (Custom Colors, Inside Top-Right)", (10, img_h - 20), font, legend_font_scale, (220,220,220), 1, cv2.LINE_AA)
 
     return image_np
 # --- HELPER FUNCTIONS END ---
@@ -695,12 +689,12 @@ def main():
         # --- PREDICTION LOOP START ---
             for image_abs_path, label_abs_path in all_image_label_pairs:
                 logger.info(f"--- Processing image for prediction: {image_abs_path.name} ---")
-                image_to_draw_on = cv2.imread(str(image_abs_path))
-                if image_to_draw_on is None:
+                image_for_processing = cv2.imread(str(image_abs_path)) # Load image once for all ops
+                if image_for_processing is None:
                     logger.error(f"    Failed to read image {image_abs_path}. Skipping.")
                     continue
 
-                pred_results_list = predict_model_instance.predict(source=image_to_draw_on.copy(), save=False, verbose=False, conf=DEFAULT_CONF_THRESHOLD)
+                pred_results_list = predict_model_instance.predict(source=image_for_processing.copy(), save=False, verbose=False, conf=DEFAULT_CONF_THRESHOLD)
                 
                 raw_predictions_data = [] # Store as list of dicts: {'xyxy', 'conf', 'cls'}
                 if pred_results_list and pred_results_list[0].boxes:
@@ -715,8 +709,8 @@ def main():
                 # --- Apply Per-Class Confidence Thresholds ---
                 thresholded_predictions = []
                 for pred_item in raw_predictions_data:
-                    class_name = class_names_map.get(pred_item['cls'], "").lower().strip()
-                    conf_thresh = PER_CLASS_CONF_THRESHOLDS.get(class_name, DEFAULT_CONF_THRESHOLD)
+                    class_name_for_thresh_lookup = class_names_map.get(pred_item['cls'], "").lower().strip()
+                    conf_thresh = PER_CLASS_CONF_THRESHOLDS.get(class_name_for_thresh_lookup, DEFAULT_CONF_THRESHOLD)
                     if pred_item['conf'] >= conf_thresh:
                         thresholded_predictions.append(pred_item)
                 # --- End Per-Class Confidence Thresholding ---
@@ -737,54 +731,54 @@ def main():
                                 suppressed_flags[i] = True
                                 break # Box i is suppressed, no need for it to suppress others
 
-                filtered_predictions = []
+                filtered_predictions_after_nms = []
                 for idx, p_data in enumerate(thresholded_predictions):
                     if not suppressed_flags[idx]:
-                        filtered_predictions.append(p_data) # Keep the original dict structure
+                        filtered_predictions_after_nms.append(p_data) # Keep the original dict structure
                 
-                ground_truth_annotations = parse_yolo_annotations(label_abs_path)
+                ground_truth_annotations_raw = parse_yolo_annotations(label_abs_path)
                 
-                # --- Match predictions to GT to determine TP, FP, FN for this image ---
-                num_gt_boxes = len(ground_truth_annotations)
-                gt_boxes_for_matching = []
-                img_h_for_coords, img_w_for_coords = image_to_draw_on.shape[:2] # Get image dimensions for coord conversion
-                for gt_ann in ground_truth_annotations:
-                    gt_class_id, x_c, y_c, w, h = gt_ann
+                num_gt_boxes = len(ground_truth_annotations_raw)
+                gt_boxes_for_matching_and_drawing = [] # Will store GTs with their match status
+                img_h_for_coords, img_w_for_coords = image_for_processing.shape[:2]
+                for gt_ann_raw in ground_truth_annotations_raw:
+                    gt_class_id, x_c, y_c, w, h = gt_ann_raw
                     x1_gt = (x_c - w / 2) * img_w_for_coords
                     y1_gt = (y_c - h / 2) * img_h_for_coords
                     x2_gt = (x_c + w / 2) * img_w_for_coords
                     y2_gt = (y_c + h / 2) * img_h_for_coords
-                    gt_boxes_for_matching.append({'cls': gt_class_id, 'xyxy': [x1_gt, y1_gt, x2_gt, y2_gt], 'matched': False})
+                    gt_boxes_for_matching_and_drawing.append({'cls': gt_class_id, 'xyxy': [x1_gt, y1_gt, x2_gt, y2_gt], 'matched_by_pred': False})
+
 
                 num_true_positives_for_image = 0
                 
-                # Add correctness_status to each prediction in filtered_predictions
-                # This list will be used for both logging/CSV and drawing
-                final_predictions_with_status = []
+                final_predictions_with_status = [] # Will store dicts like {'xyxy', 'conf', 'cls', 'correctness_status'}
+                
+                # Sort predictions by confidence for stable matching
+                sorted_pred_indices = sorted(range(len(filtered_predictions_after_nms)), key=lambda k: filtered_predictions_after_nms[k]['conf'], reverse=True)
 
-                sorted_indices_preds = sorted(range(len(filtered_predictions)), key=lambda k: filtered_predictions[k]['conf'], reverse=True)
-
-                for pred_idx_in_sorted_list in sorted_indices_preds:
-                    pred_item = filtered_predictions[pred_idx_in_sorted_list] # Get the actual prediction item
+                for i_sorted in sorted_pred_indices:
+                    pred_item = filtered_predictions_after_nms[i_sorted]
                     pred_class_id = pred_item['cls']
                     pred_box_coords = pred_item['xyxy']
                     
-                    current_pred_status = "Incorrect (FP)" # Default to False Positive
+                    current_pred_status = "Incorrect (FP)" 
                     best_iou_for_this_pred = 0.0
-                    best_gt_match_idx = -1
+                    best_gt_match_idx = -1 # Index in gt_boxes_for_matching
 
-                    for gt_idx, gt_data in enumerate(gt_boxes_for_matching):
-                        if not gt_data['matched'] and pred_class_id == gt_data['cls']: # If GT not matched and class is same
+                    for gt_idx, gt_data in enumerate(gt_boxes_for_matching_and_drawing):
+                        if not gt_data['matched_by_pred'] and pred_class_id == gt_data['cls']:
                             iou = calculate_iou(pred_box_coords, gt_data['xyxy'])
                             if iou > best_iou_for_this_pred:
                                 best_iou_for_this_pred = iou
                                 best_gt_match_idx = gt_idx
                     
                     if best_iou_for_this_pred > BOX_MATCHING_IOU_THRESHOLD:
-                        if not gt_boxes_for_matching[best_gt_match_idx]['matched']: # Check again, just in case (though sorting preds helps)
-                            current_pred_status = "Correct (TP)"
-                            gt_boxes_for_matching[best_gt_match_idx]['matched'] = True
-                            num_true_positives_for_image += 1
+                        if not gt_boxes_for_matching_and_drawing[best_gt_match_idx]['matched_by_pred']: 
+                             current_pred_status = "Correct (TP)"
+                             gt_boxes_for_matching_and_drawing[best_gt_match_idx]['matched_by_pred'] = True # Mark GT as matched
+                             num_true_positives_for_image += 1
+                    
                     final_predictions_with_status.append({**pred_item, 'correctness_status': current_pred_status})
                 
                 # Sort back to original order if necessary, or just use final_predictions_with_status for logging/CSV
@@ -806,8 +800,7 @@ def main():
                 else:
                     logger.info("    No objects detected after all filters.")
                 
-                # --- Determine if image is incorrect for saving ---
-                num_false_positives = len(filtered_predictions) - num_true_positives_for_image
+                num_false_positives = len(final_predictions_with_status) - num_true_positives_for_image
                 num_false_negatives = num_gt_boxes - num_true_positives_for_image
                 
                 image_has_errors_for_saving = (num_false_positives > 0) or (num_false_negatives > 0)
@@ -816,10 +809,15 @@ def main():
                     images_with_errors_count += 1
                     logger.info(f"    IMAGE FLAGGED: {image_abs_path.name} (TP: {num_true_positives_for_image}, FP: {num_false_positives}, FN: {num_false_negatives}).")
 
-                    image_with_all_annotations = draw_all_annotations(
-                        image_to_draw_on.copy(),
-                        final_predictions_with_status, # Pass predictions with status for drawing
-                        ground_truth_annotations,
+                    # Prepare lists of only FPs and FNs for drawing
+                    fp_predictions_to_draw = [p for p in final_predictions_with_status if p['correctness_status'] == "Incorrect (FP)"]
+                    fn_gt_to_draw = [gt for gt in gt_boxes_for_matching_and_drawing if not gt['matched_by_pred']]
+
+
+                    image_with_selective_annotations = draw_all_annotations(
+                        image_for_processing.copy(), # Start with a fresh copy of the original image
+                        fp_predictions_to_draw, 
+                        fn_gt_to_draw, # Pass only unmatched GTs
                         class_names_map
                     )
 
@@ -830,7 +828,7 @@ def main():
                     elif image_abs_path in test_image_paths_set: target_dir = incorrect_preds_test_dir
 
                     if target_dir:
-                        cv2.imwrite(str(target_dir / image_abs_path.name), image_with_all_annotations)
+                        cv2.imwrite(str(target_dir / image_abs_path.name), image_with_selective_annotations)
                         logger.info(f"      Saved comparison image to {target_dir / image_abs_path.name}")
             
             logger.info(f"Total images flagged with errors for saving: {images_with_errors_count}")
