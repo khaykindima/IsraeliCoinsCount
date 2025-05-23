@@ -4,9 +4,11 @@ import yaml
 import random
 import shutil # For copying files
 import logging # For logging to file and console
+import cv2      # To save images with drawn boxes
 from pathlib import Path
 from collections import Counter
 from ultralytics import YOLO
+import numpy as np # Required for image manipulation
 
 # --- Configuration ---
 # TODO: Update this path if your main dataset directory is different
@@ -21,9 +23,9 @@ DATASET_YAML_NAME = "custom_dataset_for_training.yaml"
 INCORRECT_PREDICTIONS_SUBDIR = "incorrect_predictions" # Subfolder for saving incorrect predictions
 LOG_FILE_NAME = "script_run.log" # Name of the log file
 
-MODEL_NAME = "yolov8n.pt" # You can change this to other YOLOv11 variants like 'yolov11s.pt' etc.
-MODEL_NAME = "yolo_experiment_output/training_runs/yolov8n_custom_training3/weights/best.pt" # You can change this to other YOLOv11 variants like 'yolov11s.pt' etc.
-EPOCHS = 0 # Number of training epochs
+# MODEL_NAME = "yolov8n.pt" # You can change this to other YOLOv11 variants like 'yolov11s.pt' etc.
+MODEL_NAME = "best.pt" # You can change this to other YOLOv11 variants like 'yolov11s.pt' etc.
+EPOCHS = 0 # Number of training epochs. If 0, training is skipped, and MODEL_NAME is loaded for prediction.
 IMG_SIZE = 640 # Image size for training
 
 # --- Train/Validation/Test Split Ratios ---
@@ -104,7 +106,7 @@ def copy_log_to_run_directory(initial_log_path, run_dir_path, target_log_filenam
         except Exception as e:
             logger.error(f"Error copying log file from {initial_log_path} to {run_dir_path / target_log_filename}: {e}")
     elif not run_dir_path:
-        logger.warning("Cannot copy log file: Training run directory not specified or not created.")
+        logger.warning("Cannot copy log file: Run directory not specified or not created.")
     elif not initial_log_path.exists():
         logger.warning(f"Cannot copy log file: Initial log file {initial_log_path} does not exist.")
 
@@ -303,28 +305,134 @@ def create_dataset_yaml(dataset_root_abs_path_str,
     except Exception as e:
         logger.error(f"Error writing YAML file {output_yaml_path_obj}: {e}")
 
-def parse_label_file(label_file_path):
+# --- HELPER FUNCTIONS FOR DRAWING ---
+def parse_yolo_annotations(label_file_path):
     """
-    Parses a YOLO format label file and returns a Counter of class IDs.
+    Parses a YOLO format label file and returns detailed annotations.
     Args:
         label_file_path (Path): Path to the .txt label file.
     Returns:
-        Counter: A Counter object with class_id: count.
+        list: A list of tuples, where each tuple is (class_id, x_center, y_center, width, height).
+              Returns an empty list if the file cannot be parsed.
     """
-    class_counts = Counter()
+    annotations = []
     if not label_file_path.is_file():
-        logger.warning(f"(parse_label_file): Label file not found at {label_file_path}")
-        return class_counts
+        logger.warning(f"(parse_yolo_annotations): Label file not found at {label_file_path}")
+        return annotations
     try:
         with open(label_file_path, 'r') as f:
             for line in f:
                 parts = line.strip().split()
-                if parts:
+                if len(parts) == 5:
                     class_id = int(parts[0])
-                    class_counts[class_id] += 1
+                    x_center = float(parts[1])
+                    y_center = float(parts[2])
+                    width = float(parts[3])
+                    height = float(parts[4])
+                    annotations.append((class_id, x_center, y_center, width, height))
     except Exception as e:
-        logger.error(f"Error parsing label file {label_file_path}: {e}")
-    return class_counts
+        logger.error(f"Error parsing YOLO annotation file {label_file_path}: {e}")
+    return annotations
+
+def draw_all_annotations(image_np, pred_boxes, gt_annotations, class_names_map):
+    """
+    Draws predicted and ground truth bounding boxes and labels on an image.
+    Args:
+        image_np (np.ndarray): The image to draw on.
+        pred_boxes (ultralytics.engine.results.Boxes): The Boxes object from prediction results.
+                                                      Can be None if no predictions.
+        gt_annotations (list): A list of tuples from parse_yolo_annotations.
+                               Can be empty if no ground truth.
+        class_names_map (dict): Dictionary mapping class ID (int) to class name (str).
+    Returns:
+        np.ndarray: The image with all annotations drawn.
+    """
+    img_h, img_w = image_np.shape[:2]
+    font = cv2.FONT_HERSHEY_SIMPLEX
+
+    # --- Define Color Map for Predicted AND Ground Truth Boxes ---
+    # Colors are in BGR format
+    BOX_COLOR_MAP = {
+        "one": (0, 255, 255),   # Yellow
+        "two": (128, 0, 128),   # Purple
+        "five": (0, 0, 255),    # Red
+        "ten": (255, 255, 0),     # Cyan/Teal (Updated from Dark Green)
+        # Add more class names and colors as needed
+    }
+    DEFAULT_BOX_COLOR = (255, 0, 0) # Blue for any other classes not in map
+
+    # --- Draw Predicted Boxes ---
+    if pred_boxes is not None:
+        pred_font_scale = 1.5 # Font scale for prediction text
+        pred_text_thickness = 4 # Thickness for text, must be an integer
+        pred_box_thickness = 2 # Thickness for box lines, must be an integer
+
+        for i in range(len(pred_boxes.xyxy)):
+            x1, y1, x2, y2 = map(int, pred_boxes.xyxy[i])
+            class_id = int(pred_boxes.cls[i])
+            confidence = float(pred_boxes.conf[i])
+
+            class_name = class_names_map.get(class_id, f"ID_{class_id}")
+            label = f"{class_name} {confidence:.2f}"
+            
+            # Get color for prediction using the BOX_COLOR_MAP
+            # Convert class_name to lowercase for robust matching with BOX_COLOR_MAP keys
+            color = BOX_COLOR_MAP.get(class_name.lower(), DEFAULT_BOX_COLOR)
+
+            # Draw the rectangle for the prediction
+            cv2.rectangle(image_np, (x1, y1), (x2, y2), color, pred_box_thickness)
+
+            # Get text size
+            (text_w, text_h), baseline = cv2.getTextSize(label, font, pred_font_scale, pred_text_thickness)
+
+            # Position the label at the top-left of the box
+            label_x_pos = x1
+            label_y_pos = y1 - baseline - 3 
+            if label_y_pos < text_h : # Adjust if off-screen
+                label_y_pos = y1 + text_h + baseline + 3 # Place below if no space above
+
+            cv2.rectangle(image_np, (label_x_pos, label_y_pos - text_h - baseline), (label_x_pos + text_w, label_y_pos + baseline), color, -1)
+            cv2.putText(image_np, label, (label_x_pos, label_y_pos), font, pred_font_scale, (0,0,0), pred_text_thickness, cv2.LINE_AA) # Black text
+
+    # --- Draw Ground Truth Boxes ---
+    if gt_annotations:
+        gt_font_scale = 1.4 # Font scale for ground truth text
+        gt_text_thickness = 3 # Thickness for text, must be integer
+        gt_box_thickness = 2 # Thickness for box lines, must be integer
+
+
+        for ann in gt_annotations:
+            class_id, x_center, y_center, width, height = ann
+            abs_x_center, abs_y_center = x_center * img_w, y_center * img_h
+            abs_width, abs_height = width * img_w, height * img_h
+            x1, y1 = int(abs_x_center - abs_width / 2), int(abs_y_center - abs_height / 2)
+            x2, y2 = int(x1 + abs_width), int(y1 + abs_height)
+
+            class_name = class_names_map.get(class_id, f"ID_{class_id}")
+            # Get color for ground truth using the BOX_COLOR_MAP
+            gt_color = BOX_COLOR_MAP.get(class_name.lower(), DEFAULT_BOX_COLOR) # Fallback to default if GT class not in map
+
+            cv2.rectangle(image_np, (x1, y1), (x2, y2), gt_color, gt_box_thickness)
+
+            label = f"GT: {class_name}"
+            (text_w, text_h), baseline = cv2.getTextSize(label, font, gt_font_scale, gt_text_thickness)
+            
+            text_margin = 3
+            label_x_pos = x2 - text_w - text_margin 
+            label_y_pos = y1 + text_h + text_margin 
+
+            cv2.rectangle(image_np, (label_x_pos, label_y_pos - text_h - baseline), (label_x_pos + text_w, label_y_pos + baseline), gt_color, -1)
+            cv2.putText(image_np, label, (label_x_pos, label_y_pos), font, gt_font_scale, (0,0,0), gt_text_thickness, cv2.LINE_AA) # Black text
+
+    # --- Draw Legend ---
+    legend_font_scale = 0.5
+    # Position legend at the bottom of the image
+    cv2.putText(image_np, "Predictions (Custom Colors, Top-Left)", (10, img_h - 40), font, legend_font_scale, (220, 220, 220), 1, cv2.LINE_AA) # Light gray for better visibility
+    cv2.putText(image_np, "Ground Truth (Custom Colors, Inside Top-Right)", (10, img_h - 20), font, legend_font_scale, (220,220,220), 1, cv2.LINE_AA) # Also light gray for consistency
+
+    return image_np
+# --- HELPER FUNCTIONS END ---
+
 
 def main():
     """
@@ -356,7 +464,7 @@ def main():
     )
 
     if not all_image_label_pairs:
-        logger.error("No image-label pairs found. Cannot proceed with training.") 
+        logger.error("No image-label pairs found. Cannot proceed.")
         return
     
     # --- Step 1: Determine Class Names and Number of Classes ---
@@ -367,7 +475,7 @@ def main():
     # Try to load class names from the user-provided data.yaml
     names_list_from_file = load_class_names_from_original_yaml(original_data_yaml_abs_path)
 
-    if names_list_from_file: # Successfully loaded names from data.yaml
+    if names_list_from_file is not None: # Successfully loaded names from data.yaml (could be an empty list)
         logger.info(f"Successfully loaded {len(names_list_from_file)} class names from '{original_data_yaml_abs_path}'.")
         class_names_map = {i: str(name) for i, name in enumerate(names_list_from_file)}
         num_classes = len(names_list_from_file)
@@ -377,9 +485,13 @@ def main():
             class_ids_in_labels = get_unique_class_ids(all_label_dirs_abs_for_class_scan) 
             if class_ids_in_labels: # If any class IDs were actually found in labels
                 max_id_in_labels = max(class_ids_in_labels)
-                if max_id_in_labels >= num_classes:
+                if num_classes > 0 and max_id_in_labels >= num_classes: # Only warn if num_classes is defined
                     logger.warning(f"Max class ID in labels ({max_id_in_labels}) is >= number of classes defined in '{original_data_yaml_abs_path}' ({num_classes}).")
                     logger.warning("         This might lead to errors or misinterpretations during training if labels use IDs outside the defined names.")
+                elif num_classes == 0 and max_id_in_labels >= 0 : # If data.yaml has nc:0 but labels exist
+                     logger.warning(f"Data YAML '{original_data_yaml_abs_path}' defines 0 classes, but labels contain class IDs (max: {max_id_in_labels}).")
+                     logger.warning("         Consider updating data.yaml or generating names from labels.")
+
     else: # Fallback: data.yaml not found or 'names' key missing/invalid
         logger.warning(f"Could not load 'names' list from '{original_data_yaml_abs_path}'.")
         if not all_label_dirs_abs_for_class_scan: # If no label dirs found, and data.yaml failed, cannot proceed
@@ -400,9 +512,12 @@ def main():
 
     logger.info(f"Final effective number of classes (nc): {num_classes}")
     logger.info(f"Final class names map: {class_names_map}")
-    # Allow nc=0 if explicitly from an empty 'names' list in data.yaml, otherwise error.
-    if num_classes == 0 and not (names_list_from_file is not None and len(names_list_from_file) == 0) :
-        logger.error("Number of classes is zero. Cannot train. Please check your data.yaml or label files.")
+
+    # Critical check: if nc is 0 (and it wasn't explicitly from an empty 'names: []' in data.yaml), then error.
+    # An empty 'names: []' list in data.yaml is a valid scenario for some use cases (e.g. if you only want to detect 'something' without classes).
+    if num_classes == 0 and not (names_list_from_file is not None and len(names_list_from_file) == 0):
+        logger.error("Number of classes is zero, and it wasn't explicitly set via an empty 'names' list in data.yaml. Cannot proceed.")
+        logger.error("Please check your data.yaml or label files.")
         return
 
     # --- Step 1.5: Split Data into Train, Validation, Test ---
@@ -429,8 +544,8 @@ def main():
     test_rel_img_dirs_str = [str(d) for d in test_rel_img_dirs]
 
 
-    # --- Step 2: Create dataset.yaml for Training ---
-    logger.info("--- Step 2: Creating Dataset YAML for Training ---") 
+    # --- Step 2: Create dataset.yaml for Training/Evaluation ---
+    logger.info("--- Step 2: Creating Dataset YAML for Training/Evaluation ---")
     # DATASET_YAML_NAME is for the generated YAML
     generated_dataset_yaml_path = output_path / DATASET_YAML_NAME 
     
@@ -448,12 +563,11 @@ def main():
         logger.error(f"Failed to create {generated_dataset_yaml_path}. Exiting.") 
         return
 
-    # --- Step 3: Train the model ---
-    # Using original variable names trained_model_path and model (for the loaded/trained object)
-    logger.info(f"--- Step 3: Checking for Training Requirement ---")
-    trained_model_path = None # Path to best.pt
-    model_object_after_training = None # To store the model object after training
-    current_training_run_actual_dir = None # To store the actual path of the current training run
+    # --- Step 3: Train the model (or load for prediction) ---
+    logger.info(f"--- Step 3: Model Training/Loading ---")
+    trained_model_path = None # Path to best.pt or specified model
+    model_object_for_ops = None # To store the model object after training or loading
+    current_run_dir = None # To store the actual path of the current training or prediction run
 
     # --- Conditional Training Block ---
     # If EPOCHS > 0, the script will train the model.
@@ -461,14 +575,14 @@ def main():
     if EPOCHS > 0:
         logger.info(f"EPOCHS set to {EPOCHS}. Proceeding with model training.")
         try:
-            model = YOLO(MODEL_NAME)  # Load a pretrained model
-            model_object_after_training = model # Store initial for fallback if training fails early
-            logger.info(f"Training with model: {MODEL_NAME}, epochs: {EPOCHS}, img_size: {IMG_SIZE}")
-            logger.info(f"Dataset YAML: {generated_dataset_yaml_path}")
-            logger.info(f"Using Augmentations: {AUGMENTATION_PARAMS}")
-
+            # Initialize model for training. MODEL_NAME can be a base model like 'yolov8n.pt' or a path to resume training.
+            model = YOLO(MODEL_NAME)
+            model_object_for_ops = model # Store initial for fallback if training fails early
+            logger.info(f"Starting training with model: {MODEL_NAME}, epochs: {EPOCHS}, img_size: {IMG_SIZE}")
             project_base_dir = output_path / "training_runs"
-            training_run_name = f"{Path(MODEL_NAME).stem}_custom_training"
+            # Use stem of MODEL_NAME if it's a path, or MODEL_NAME directly if it's like 'yolov8n.pt'
+            base_model_name_for_run = Path(MODEL_NAME).stem if Path(MODEL_NAME).suffix else MODEL_NAME
+            training_run_name = f"{base_model_name_for_run}"
 
             results = model.train(
                 data=str(generated_dataset_yaml_path),
@@ -480,240 +594,184 @@ def main():
                 **AUGMENTATION_PARAMS
             )
             logger.info("Training completed.")
-            model_object_after_training = model
-            current_training_run_actual_dir = Path(results.save_dir) # Get the actual save directory
-            logger.info(f"Training run artifacts saved to: {current_training_run_actual_dir}")
+            model_object_for_ops = model # The model object is updated in-place by .train()
+            current_run_dir = Path(results.save_dir) # Get the actual save directory of this run
+            logger.info(f"Training run artifacts saved to: {current_run_dir}")
 
+            # Determine the path to the best trained model
             if hasattr(model, 'trainer') and hasattr(model.trainer, 'best') and model.trainer.best and Path(model.trainer.best).exists():
                 trained_model_path = str(Path(model.trainer.best).resolve())
-                logger.info(f"Best model saved at (from model.trainer.best): {trained_model_path}")
-            elif current_training_run_actual_dir and (current_training_run_actual_dir / "weights" / "best.pt").exists():
-                trained_model_path = str((current_training_run_actual_dir / "weights" / "best.pt").resolve())
+                logger.info(f"Best model saved at: {trained_model_path}")
+            elif current_run_dir and (current_run_dir / "weights" / "best.pt").exists():
+                trained_model_path = str((current_run_dir / "weights" / "best.pt").resolve())
                 logger.info(f"Found best model at expected path: {trained_model_path}")
-            elif hasattr(model, 'ckpt_path') and model.ckpt_path and Path(model.ckpt_path).exists():
-                 trained_model_path = str(Path(model.ckpt_path).resolve())
-                 logger.info(f"Using last checkpoint as trained model path: {trained_model_path}")
             else:
-                logger.info("Could not determine exact path to best.pt. Will use model object in memory if available.")
-
+                logger.warning("Could not determine exact path to best.pt.")
         except Exception as e:
             logger.exception(f"An error occurred during training:")
-            logger.error("Please ensure your dataset YAML is correctly configured and points to valid image/label paths.")
-            logger.error("Also, check if the model name (MODEL_NAME) is correct and downloadable by Ultralytics, or if it exists at the specified path.")
-            # current_training_run_actual_dir might not be set if model.train() itself fails early
-            # However, if 'results' object exists (meaning train started enough to return it)
             if 'results' in locals() and hasattr(results, 'save_dir') and Path(results.save_dir).is_dir():
-                current_training_run_actual_dir = Path(results.save_dir)
-            # The finally block will attempt to copy the log using whatever current_training_run_actual_dir is.
-            return
-    else: # New block for skipping training when EPOCHS == 0
+                current_run_dir = Path(results.save_dir) # Try to get run dir even if error occurred late in training
+            # The finally block in main() will attempt to copy the log using whatever current_run_dir is.
+            return # Exit script
+    else: # EPOCHS == 0, skip training and load a pre-trained model
         logger.info(f"EPOCHS is set to 0. Skipping training.")
-        logger.info(f"Attempting to load model '{MODEL_NAME}' for prediction and evaluation.")
+        model_path_to_load = Path(MODEL_NAME)
+        if not model_path_to_load.exists() or not model_path_to_load.is_file():
+            logger.error(f"Model not found at '{model_path_to_load}'. When EPOCHS is 0, MODEL_NAME must be a valid path to a .pt model file.")
+            return
         try:
-            model_path_obj = Path(MODEL_NAME)
-            if not model_path_obj.exists():
-                logger.error(f"Model not found at '{MODEL_NAME}'. When EPOCHS is 0, MODEL_NAME must be a valid path to a trained model file (e.g., 'best.pt').")
-                # The finally block will run, but with current_training_run_actual_dir as None, so no log copy will happen.
-                return # Exit the script
-
-            # Load the specified model
-            model_object_after_training = YOLO(model_path_obj)
-            trained_model_path = str(model_path_obj.resolve()) # Store the absolute path to the model
+            model_object_for_ops = YOLO(model_path_to_load) # Load the specified model
+            trained_model_path = str(model_path_to_load.resolve()) # Store the absolute path to the loaded model
             logger.info(f"Successfully loaded model from: {trained_model_path}")
 
-            # Create a directory for this prediction-only run to store logs and incorrect predictions, maintaining script structure.
-            prediction_run_name = f"{model_path_obj.stem}_prediction_run"
-            # Place it in a 'prediction_runs' subfolder to distinguish from training runs
-            current_training_run_actual_dir = output_path / "prediction_runs" / prediction_run_name
-            current_training_run_actual_dir.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Outputs for this prediction-only run will be saved in: {current_training_run_actual_dir}")
+            # --- Create a unique directory for this prediction-only run ---
+            base_prediction_run_name = f"{model_path_to_load.stem}_prediction_only_run"
+            prediction_project_dir = output_path / "prediction_runs"
+            
+            current_run_dir_candidate = prediction_project_dir / base_prediction_run_name
+            counter = 1
+            # Loop to find a unique directory name, appending a number if needed
+            while current_run_dir_candidate.exists():
+                counter += 1
+                current_run_dir_candidate = prediction_project_dir / f"{base_prediction_run_name}{counter}"
+            
+            current_run_dir = current_run_dir_candidate
+            current_run_dir.mkdir(parents=True, exist_ok=False) # exist_ok=False as we've ensured uniqueness
+            logger.info(f"Outputs for this prediction-only run will be saved in: {current_run_dir}")
 
         except Exception as e:
-            logger.exception("An error occurred while loading the model for prediction:")
-            # The finally block will run, but with current_training_run_actual_dir as None, so no log copy will happen.
-            return
+            logger.exception(f"An error occurred while loading the model '{model_path_to_load}':")
+            return # --- End of EPOCHS == 0 block ---
 
-
-    # --- Setup for incorrect predictions directory *after* training, inside the current run's folder ---
-    incorrect_preds_train_dir = None
-    incorrect_preds_val_dir = None
-    incorrect_preds_test_dir = None
-    if current_training_run_actual_dir: # Proceed only if training run directory is known
-        incorrect_preds_base_dir = current_training_run_actual_dir / INCORRECT_PREDICTIONS_SUBDIR
+    # --- Setup for incorrect predictions directory ---
+    incorrect_preds_train_dir = incorrect_preds_val_dir = incorrect_preds_test_dir = None
+    if current_run_dir:
+        incorrect_preds_base_dir = current_run_dir / INCORRECT_PREDICTIONS_SUBDIR
         incorrect_preds_train_dir = incorrect_preds_base_dir / "train"
         incorrect_preds_val_dir = incorrect_preds_base_dir / "validation"
         incorrect_preds_test_dir = incorrect_preds_base_dir / "test"
-
         logger.info(f"Saving incorrect predictions to subfolders within: {incorrect_preds_base_dir}")
-        incorrect_preds_train_dir.mkdir(parents=True, exist_ok=True)
-        incorrect_preds_val_dir.mkdir(parents=True, exist_ok=True)
-        incorrect_preds_test_dir.mkdir(parents=True, exist_ok=True)
+        incorrect_preds_base_dir.mkdir(parents=True, exist_ok=True)
+        incorrect_preds_train_dir.mkdir(exist_ok=True)
+        incorrect_preds_val_dir.mkdir(exist_ok=True)
+        incorrect_preds_test_dir.mkdir(exist_ok=True)
     else:
-        logger.warning("Training run directory not identified. Incorrect predictions will not be saved to a run-specific folder.")
+        logger.warning("Run directory not identified. Incorrect predictions will not be saved.")
 
-
-    # --- Step 4: Evaluate the model on Validation and Test Sets ---
-    logger.info("--- Step 4: Evaluating Model ---") 
-    eval_model_instance = None 
-    if trained_model_path and Path(trained_model_path).exists(): 
-        logger.info(f"Loading best model from {trained_model_path} for evaluation.")
-        eval_model_instance = YOLO(trained_model_path)
-    elif model_object_after_training: # Use the model object from training if path not found
-        logger.info("Evaluating with the model object from training (in memory).")
-        eval_model_instance = model_object_after_training # Use the stored model object
-    else: # Fallback if neither path nor object is available
-        logger.error("No trained model available for evaluation (path or object).")
-        # Log copy handled by finally block
-        return 
-        
-    try:
-        logger.info("--- Evaluating on Validation Set ---") 
-        # Use the same generated YAML for validation, Ultralytics will use the 'val' key from it
-        val_metrics = eval_model_instance.val(data=str(generated_dataset_yaml_path), split='val') 
-        logger.info("Validation metrics:")
-        if hasattr(val_metrics, 'box') and hasattr(val_metrics.box, 'map'): # Accessing metrics correctly
-            logger.info(f"  mAP50-95 (val): {val_metrics.box.map:.4f}")
-            logger.info(f"  mAP50 (val): {val_metrics.box.map50:.4f}")
-            logger.info(f"  mAP75 (val): {val_metrics.box.map75:.4f}")
-        else:
-            logger.info("  Could not retrieve detailed mAP scores for validation set directly.")
-
-        # Evaluate on the test set if it's not empty
-        if test_rel_img_dirs_str: # Check if the list of test directories is not empty
-            logger.info("--- Evaluating on Test Set ---") 
-            # Ultralytics will use the 'test' key from the YAML
-            test_metrics = eval_model_instance.val(data=str(generated_dataset_yaml_path), split='test') 
-            logger.info("Test metrics:")
-            if hasattr(test_metrics, 'box') and hasattr(test_metrics.box, 'map'): 
-                logger.info(f"  mAP50-95 (test): {test_metrics.box.map:.4f}")
-                logger.info(f"  mAP50 (test): {test_metrics.box.map50:.4f}")
-                logger.info(f"  mAP75 (test): {test_metrics.box.map75:.4f}")
-            else:
-                logger.info("  Could not retrieve detailed mAP scores for test set directly.")
-        else:
-            logger.info("Skipping evaluation on test set as it is empty (no test directories found/specified).") 
-
-    except Exception as e:
-        logger.exception("An error occurred during evaluation:") 
-
+    # --- Step 4: Evaluate the model ---
+    logger.info("--- Step 4: Evaluating Model ---")
+    eval_model_instance = model_object_for_ops or (YOLO(trained_model_path) if trained_model_path else None)
+    if not eval_model_instance:
+        logger.error("No model available for evaluation.")
+    else:
+        try:
+            if val_rel_img_dirs_str:
+                logger.info("--- Evaluating on Validation Set ---")
+                eval_model_instance.val(data=str(generated_dataset_yaml_path), split='val', project=str(current_run_dir), name="eval_val_results")
+            if test_rel_img_dirs_str:
+                logger.info("--- Evaluating on Test Set ---")
+                eval_model_instance.val(data=str(generated_dataset_yaml_path), split='test', project=str(current_run_dir), name="eval_test_results")
+        except Exception as e:
+            logger.exception("An error occurred during evaluation:")
 
     # --- Step 5: Predict on ALL images, count objects, and save incorrect predictions ---
-    logger.info("--- Step 5: Predicting on ALL Images, Counting, and Saving Incorrect ---") 
-    predict_model_instance = None # Variable to hold the model instance for prediction
-    if trained_model_path and Path(trained_model_path).exists():
-        logger.info(f"Loading best model from {trained_model_path} for prediction.")
-        predict_model_instance = YOLO(trained_model_path)
-    elif model_object_after_training:
-        logger.info("Predicting with the model object from training (in memory).")
-        predict_model_instance = model_object_after_training # Use the stored model object
-    else:
-        logger.error("No trained model available for prediction (path or object).")
-        # Log copy handled by finally block
+    logger.info("--- Step 5: Predicting and Comparing on ALL Images ---")
+    predict_model_instance = model_object_for_ops or (YOLO(trained_model_path) if trained_model_path else None)
+    if not predict_model_instance:
+        logger.error("No model available for prediction.")
+        copy_log_to_run_directory(initial_log_file_path, current_run_dir, LOG_FILE_NAME)
         return
 
-    if not all_image_label_pairs: # Should have been caught earlier, but good check
-        logger.warning("No images found in any of the discovered image subdirectories for prediction.") 
-        # Log copy handled by finally block
-        return
-
-    logger.info(f"Found {len(all_image_label_pairs)} total image-label pairs for prediction across all sets.")
-    
-    total_class_counts_all_images = Counter()
+    logger.info(f"Found {len(all_image_label_pairs)} total image-label pairs for comparison.")
     incorrect_prediction_count = 0
-    
+
     try:
-        for image_abs_path, label_abs_path in all_image_label_pairs: # Iterate over all pairs
-            # Determine which set this image belongs to for saving incorrect predictions
-            current_set_incorrect_target_dir = None # Renamed for clarity
-            if incorrect_preds_train_dir and incorrect_preds_val_dir and incorrect_preds_test_dir : 
-                if image_abs_path in train_image_paths_set:
-                    current_set_incorrect_target_dir = incorrect_preds_train_dir
-                elif image_abs_path in val_image_paths_set:
-                    current_set_incorrect_target_dir = incorrect_preds_val_dir
-                elif image_abs_path in test_image_paths_set:
-                    current_set_incorrect_target_dir = incorrect_preds_test_dir
-                
-            # Show relative path from INPUTS_DIR for cleaner logging
-            logger.info(f"  Predicting on: {image_abs_path.relative_to(inputs_dir_pathobj)}") 
-            pred_results = predict_model_instance.predict(source=str(image_abs_path), save=False, verbose=False) 
+        # --- MODIFIED PREDICTION LOOP START ---
+        for image_abs_path, label_abs_path in all_image_label_pairs:
+            logger.info(f"  Processing: {image_abs_path.relative_to(inputs_dir_pathobj)}")
+            
+            # Load the original image using OpenCV
+            image_to_draw_on = cv2.imread(str(image_abs_path))
+            if image_to_draw_on is None:
+                logger.error(f"    Failed to read image {image_abs_path}. Skipping.")
+                continue
+
+            # Perform prediction
+            pred_results_list = predict_model_instance.predict(source=image_to_draw_on.copy(), save=False, verbose=False) # Pass a copy to predict
             
             predicted_class_counts = Counter()
-            if pred_results and len(pred_results) > 0:
-                r = pred_results[0] 
-                detected_class_ids_float = r.boxes.cls.tolist() 
-                
-                if detected_class_ids_float:
-                    predicted_class_counts = Counter(int(cls_id) for cls_id in detected_class_ids_float)
-                    # Update overall counts for all images
-                    total_class_counts_all_images.update(predicted_class_counts) 
-                # else: No objects predicted
-            # else: No results object from prediction
+            current_pred_boxes = None # To store ultralytics.engine.results.Boxes object
             
-            # Load ground truth labels for this image
-            ground_truth_class_counts = parse_label_file(label_abs_path)
+            if pred_results_list:
+                r = pred_results_list[0]
+                # Manually draw predicted boxes onto our loaded image
+                if r.boxes:
+                    current_pred_boxes = r.boxes 
+                    predicted_class_counts = Counter(int(cls_id) for cls_id in r.boxes.cls.tolist())
 
-            # Compare predicted counts with ground truth counts
+            ground_truth_annotations = parse_yolo_annotations(label_abs_path)
+            ground_truth_class_counts = Counter(ann[0] for ann in ground_truth_annotations)
+
             if predicted_class_counts != ground_truth_class_counts:
                 incorrect_prediction_count += 1
                 logger.info(f"    INCORRECT prediction for {image_abs_path.name}.")
                 logger.info(f"      GT counts: {dict(ground_truth_class_counts)}")
                 logger.info(f"      Pred counts: {dict(predicted_class_counts)}")
-                if current_set_incorrect_target_dir: 
+
+                # Draw all annotations (predicted then ground truth)
+                image_with_all_annotations = draw_all_annotations(
+                    image_to_draw_on.copy(), # Pass a fresh copy of the original image
+                    current_pred_boxes, 
+                    ground_truth_annotations, 
+                    class_names_map
+                )
+
+                # Determine which folder to save the incorrect prediction in
+                target_dir = None
+                if image_abs_path in train_image_paths_set: target_dir = incorrect_preds_train_dir
+                elif image_abs_path in val_image_paths_set: target_dir = incorrect_preds_val_dir
+                elif image_abs_path in test_image_paths_set: target_dir = incorrect_preds_test_dir
+
+                if target_dir:
                     try:
-                        destination_path = current_set_incorrect_target_dir / image_abs_path.name
-                        shutil.copyfile(image_abs_path, destination_path) 
-                        logger.info(f"      Copied to {destination_path}")
-                    except PermissionError as perm_e:
-                        # If a PermissionError occurs, check if the file was still created (common in WSL)
-                        if destination_path.exists() and destination_path.stat().st_size > 0:
-                            logger.warning(f"      PermissionError occurred while copying {image_abs_path.name}, but file appears to exist at {destination_path}. Assuming data copied successfully despite metadata/permission error: {perm_e}")
-                        else:
-                            logger.error(f"      Failed to copy incorrect image {image_abs_path.name} due to PermissionError, and file does not exist or is empty: {perm_e}")
-                    except Exception as copy_e: # Catch other potential errors during copy
-                        logger.error(f"      Error copying incorrect image {image_abs_path.name} (non-PermissionError): {copy_e}")
-            
-        logger.info(f"Total incorrect predictions (by class counts): {incorrect_prediction_count} out of {len(all_image_label_pairs)} images.") 
-        logger.info("--- Final Object Counts Across ALL IMAGES (Train, Val, Test) ---") 
-        if total_class_counts_all_images:
-            # Iterate sorted by class ID for consistent output
-            for class_id_int, count in sorted(total_class_counts_all_images.items()): 
-                # Use the class_names_map established in Step 1
-                class_name_str = class_names_map.get(class_id_int, f"unknown_id_{class_id_int}")
-                logger.info(f"  Class '{class_name_str}' (ID: {class_id_int}): {count} occurrences") 
-        else:
-            logger.info("No objects were detected in any of the images across all sets.") 
+                        destination_path = target_dir / image_abs_path.name
+                        cv2.imwrite(str(destination_path), image_with_all_annotations)
+                        logger.info(f"      Saved comparison image to {destination_path}")
+                    except Exception as e:
+                        logger.error(f"      Failed to save comparison image for {image_abs_path.name}: {e}")
+        # --- MODIFIED PREDICTION LOOP END ---
+
+        logger.info(f"Total incorrect predictions (by class counts): {incorrect_prediction_count} out of {len(all_image_label_pairs)} images.")
 
     except Exception as e:
-        logger.exception("An error occurred during prediction and counting:") 
-    
-    # --- Final step: Copy the initial log file to the run directory if it exists ---
-    finally: # Ensure this runs even if there are exceptions in prediction step or earlier returns
-        copy_log_to_run_directory(initial_log_file_path, current_training_run_actual_dir, LOG_FILE_NAME)
+        logger.exception("An error occurred during prediction and comparison loop:")
+
+    finally:
+        copy_log_to_run_directory(initial_log_file_path, current_run_dir, LOG_FILE_NAME)
 
 
 if __name__ == '__main__':
     # --- IMPORTANT ---
-    # Before running, ensure INPUTS_DIR is the top-level directory containing
-    # variant subfolders (e.g., "hard", "easy") AND your main data.yaml.
-    # Ensure IMAGE_SUBDIR_BASENAME (e.g., "images") and LABEL_SUBDIR_BASENAME (e.g., "labels")
-    # correctly name the subfolders within each variant.
-    # Set TRAIN_RATIO, VAL_RATIO, TEST_RATIO at the top.
+    # Before running, ensure:
+    # 1. INPUTS_DIR points to your main dataset directory.
+    # 2. This directory contains ORIGINAL_DATA_YAML_NAME (e.g., data.yaml) if you want to use its class names.
+    # 3. Variant subfolders (e.g., "hard", "easy") are inside INPUTS_DIR.
+    # 4. Each variant folder has IMAGE_SUBDIR_BASENAME (e.g., "images") and LABEL_SUBDIR_BASENAME (e.g., "labels").
+    # 5. If EPOCHS = 0, MODEL_NAME must be a valid path to a .pt model file.
+    #    If EPOCHS > 0, MODEL_NAME can be a base model (e.g., 'yolov8n.pt') or a .pt file to resume from.
     #
-    # Example expected structure:
-    # INPUTS_DIR/  (e.g., /path/to/CoinCount.v30i.yolov5pytorch)
+    # Example expected structure for INPUTS_DIR:
+    # INPUTS_DIR/
     #  ├── data.yaml (ORIGINAL_DATA_YAML_NAME)
-    #  ├── hard/  
-    #  │   ├── images/  (IMAGE_SUBDIR_BASENAME)
+    #  ├── variant1/
+    #  │   ├── images/
     #  │   │   └── img1.jpg
-    #  │   └── labels/  (LABEL_SUBDIR_BASENAME)
+    #  │   └── labels/
     #  │       └── img1.txt
-    #  ├── easy/
+    #  ├── variant2/
     #  │   ├── images/
     #  │   │   └── img2.jpg
     #  │   └── labels/
     #  │       └── img2.txt
-    #  └── ... (other variant folders with similar images/labels structure)
-    #
-    # The script will generate a `custom_dataset_for_training.yaml` in OUTPUT_DIR
-    # with distinct 'train', 'val', and 'test' lists of image DIRECTORY paths.
+    #  └── ...
     main()

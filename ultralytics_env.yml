@@ -1,0 +1,15 @@
+name: ultralytics_env
+channels:
+  - defaults
+dependencies:
+  - pytorch
+  - ultralytics
+  - torchvision
+  - python=3.11
+  - torchaudio
+  - pandas
+  - seaborn
+  - pyyaml
+  - ipykernel
+  - matplotlib
+prefix: /home/dima/miniconda3/envs/ultralytics_env
