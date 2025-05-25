@@ -13,7 +13,7 @@ import csv # For exporting data to CSV
 
 # --- Configuration ---
 # TODO: Update this path if your main dataset directory is different
-INPUTS_DIR = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v37i.yolov5pytorch"  # Base directory containing variant subfolders (e.g., hard, easy) and data.yaml
+INPUTS_DIR = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v38i.yolov5pytorch"  # Base directory containing variant subfolders (e.g., hard, easy) and data.yaml
 IMAGE_SUBDIR_BASENAME = "images"  # Basename of the image subdirectory within each variant folder
 LABEL_SUBDIR_BASENAME = "labels"  # Basename of the label subdirectory within each variant folder
 ORIGINAL_DATA_YAML_NAME = "data.yaml" # Name of your existing data.yaml with class names, located in INPUTS_DIR
