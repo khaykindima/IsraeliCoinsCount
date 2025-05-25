@@ -19,11 +19,10 @@ def main_train():
     logger = setup_logging(main_log_file, logger_name='yolo_main_script_logger')
     final_log_suffix = "_train_or_direct_eval_final.log"
 
-    # --- Enhanced: Centralized configuration validation ---
     is_training_mode = config.EPOCHS > 0
     validation_mode = 'train' if is_training_mode else 'train_direct_eval'
     if not validate_config_and_paths(config, validation_mode, logger):
-        return  # Exit if validation fails
+        return
 
     try:
         logger.info("--- Step 0 & 1: Data Preparation & Class Names ---")
@@ -31,7 +30,6 @@ def main_train():
             config.INPUTS_DIR, config.IMAGE_SUBDIR_BASENAME, config.LABEL_SUBDIR_BASENAME, logger
         )
         if not image_label_pairs:
-            # Use a more specific exception to be caught by the enhanced handler
             raise FileNotFoundError("No image-label pairs found. Check INPUTS_DIR and its structure.")
 
         class_names_map, num_classes = load_or_derive_class_names(label_dirs, logger)
@@ -46,15 +44,11 @@ def main_train():
         else:
             run_direct_evaluation_workflow(image_label_pairs, class_names_map, main_log_file, logger)
 
-    # --- Enhanced: More specific error handling ---
     except (FileNotFoundError, ValueError) as e:
-        # Catch configuration or data-related errors
         finalize_and_exit(logger, main_log_file, None, f"A pre-run error occurred: {e}", final_log_suffix)
     except RuntimeError as e:
-        # Catch critical errors during model execution (e.g., from Ultralytics library)
         finalize_and_exit(logger, main_log_file, None, f"A critical runtime error occurred: {e}", final_log_suffix)
     except Exception as e:
-        # General catch-all for any other unexpected errors
         logger.exception("An unexpected error occurred during the main workflow.")
         finalize_and_exit(logger, main_log_file, None, f"An unexpected error occurred: {e}", final_log_suffix)
 
@@ -122,7 +116,7 @@ def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, lo
         'optimizer': config.TRAINING_OPTIMIZER,
         'lr0': config.TRAINING_LR0,
         'lrf': config.TRAINING_LRF,
-        'exist_ok': False, # Set to False to prevent overwriting existing runs
+        'exist_ok': False,
     }
     train_args.update(config.AUGMENTATION_PARAMS)
 
@@ -134,9 +128,9 @@ def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, lo
         eval_dir = run_dir / "post_train_detailed_evaluation"
         eval_dir.mkdir(parents=True, exist_ok=True)
         
-
         detector = create_detector_from_config(best_model_path, class_names_map, config, logger)
         evaluator = YoloEvaluator(detector, logger)
+        
         evaluator.perform_detailed_evaluation(
             eval_output_dir=eval_dir,
             all_image_label_pairs_eval=pairs
@@ -155,6 +149,7 @@ def run_direct_evaluation_workflow(pairs, class_names_map, main_log_file, logger
     
     detector = create_detector_from_config(model_path, class_names_map, config, logger)
     evaluator = YoloEvaluator(detector, logger)
+
     evaluator.perform_detailed_evaluation(
         eval_output_dir=run_dir,
         all_image_label_pairs_eval=pairs

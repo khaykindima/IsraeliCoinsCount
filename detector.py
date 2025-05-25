@@ -3,11 +3,7 @@ import cv2
 import numpy as np
 from collections import Counter
 from pathlib import Path
-# Assuming utils.py is in the same directory or accessible in PYTHONPATH
-try:
-    from .utils import calculate_iou # For package structure
-except ImportError:
-    from utils import calculate_iou # For running as standalone script in same dir
+# --- MODIFIED: The import from utils.py is removed from the top level ---
 
 class CoinDetector:
     def __init__(self, model_path, class_names_map, 
@@ -29,6 +25,7 @@ class CoinDetector:
             box_color_map (dict): Dictionary mapping lowercase class names to BGR color tuples for drawing.
             default_box_color (tuple): Default BGR color for classes not in box_color_map.
         """
+        self.model_path = Path(model_path)
         self.model = YOLO(model_path)
         self.class_names_map = class_names_map 
         self.per_class_conf_thresholds = per_class_conf_thresholds if per_class_conf_thresholds else {}
@@ -50,6 +47,9 @@ class CoinDetector:
 
     def _apply_custom_nms(self, predictions_data):
         """Applies custom inter-class Non-Maximum Suppression."""
+        # --- MODIFIED: Import is moved here to break the circular dependency ---
+        from utils import calculate_iou 
+
         if not predictions_data:
             return []
         

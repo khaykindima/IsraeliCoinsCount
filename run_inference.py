@@ -5,8 +5,11 @@ import logging
 
 try:
     import config
-    from detector import CoinDetector
-    from utils import setup_logging, load_class_names_from_yaml, discover_and_pair_image_labels 
+    # --- REFACTORED: Import the new factory function ---
+    from utils import (
+        setup_logging, load_class_names_from_yaml, 
+        discover_and_pair_image_labels, create_detector_from_config
+    )
 except ImportError as e:
     print(f"ImportError: {e}. Make sure config.py, utils.py, and detector.py are in the same directory or PYTHONPATH")
     exit()
@@ -105,22 +108,15 @@ def main_inference(input_source_path=None): # Modified to accept a path
         logger.error(f"Model file not found: {config.MODEL_PATH_FOR_PREDICTION}. Please check config.py.")
         return
     try:
-        coin_detector = CoinDetector(
-            model_path=config.MODEL_PATH_FOR_PREDICTION,
-            class_names_map=class_names_map,
-            per_class_conf_thresholds=config.PER_CLASS_CONF_THRESHOLDS,
-            default_conf_thresh=config.DEFAULT_CONF_THRESHOLD,
-            iou_suppression_threshold=config.IOU_SUPPRESSION_THRESHOLD,
-            box_color_map=config.BOX_COLOR_MAP,
-            default_box_color=config.DEFAULT_BOX_COLOR
+        # --- REFACTORED: Use the factory to create the detector ---
+        coin_detector = create_detector_from_config(
+            config.MODEL_PATH_FOR_PREDICTION, class_names_map, config, logger
         )
     except Exception as e:
         logger.exception(f"Failed to initialize CoinDetector with model {config.MODEL_PATH_FOR_PREDICTION}")
         return
 
     # --- Create output directory for inference results ---
-    # Define output_image_dir. If current_run_dir was part of a larger script, it would be set.
-    # For standalone inference, we'll use a general output directory.
     output_image_dir = config.OUTPUT_DIR / "inference_outputs" / Path(input_source_path).stem if input_source_path and Path(input_source_path).is_dir() else config.OUTPUT_DIR / "inference_outputs"
     if input_source_path and Path(input_source_path).is_file(): # Handle single file case for output dir naming
          output_image_dir = config.OUTPUT_DIR / "inference_outputs" / Path(input_source_path).stem
@@ -153,12 +149,6 @@ def main_inference(input_source_path=None): # Modified to accept a path
             cv2.imwrite(str(output_image_path), image_with_predictions)
             logger.info(f"Saved annotated image to: {output_image_path}")
             
-            # If you have a display environment and want to show images one by one:
-            # cv2.imshow(f"Inference Result - {image_path.name}", image_with_predictions)
-            # cv2.waitKey(0) # Press any key to continue to the next image
-            # cv2.destroyWindow(f"Inference Result - {image_path.name}")
-
-
         except Exception as e:
             logger.exception(f"An error occurred during inference on {image_path}:")
     

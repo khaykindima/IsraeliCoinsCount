@@ -8,6 +8,27 @@ from pathlib import Path
 from collections import Counter
 import cv2 # For drawing
 import numpy as np # For drawing
+# Import CoinDetector to be used in the factory function
+from detector import CoinDetector
+
+
+# --- NEW: Factory function for creating a detector ---
+def create_detector_from_config(model_path, class_map, config_module, logger):
+    """
+    Creates and returns a fully configured CoinDetector instance based on the config.
+    This acts as a single source of truth for detector instantiation.
+    """
+    logger.info(f"Creating detector instance with model: {model_path}")
+    detector = CoinDetector(
+        model_path=model_path,
+        class_names_map=class_map,
+        per_class_conf_thresholds=config_module.PER_CLASS_CONF_THRESHOLDS,
+        default_conf_thresh=config_module.DEFAULT_CONF_THRESHOLD,
+        iou_suppression_threshold=config_module.IOU_SUPPRESSION_THRESHOLD,
+        box_color_map=config_module.BOX_COLOR_MAP,
+        default_box_color=config_module.DEFAULT_BOX_COLOR
+    )
+    return detector
 
 # --- Logger Setup ---
 LOG_FORMATTER = logging.Formatter('%(asctime)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s')
@@ -54,6 +75,64 @@ def copy_log_to_run_directory(initial_log_path, run_dir_path, target_log_filenam
     elif not initial_log_path.exists():
         log.warning(f"Cannot copy log file: Initial log file {initial_log_path} does not exist.")
 
+# --- Centralized function for creating unique run directories ---
+def create_unique_run_dir(base_dir_pathobj, run_name_prefix):
+    """
+    Creates a unique run directory by appending a counter if the base name already exists.
+    Example: base_dir/run_prefix, base_dir/run_prefix1, base_dir/run_prefix2, ...
+    """
+    candidate_dir = base_dir_pathobj / run_name_prefix
+    counter = 1
+    while candidate_dir.exists():
+        candidate_dir = base_dir_pathobj / f"{run_name_prefix}{counter}"
+        counter += 1
+    candidate_dir.mkdir(parents=True, exist_ok=False)
+    return candidate_dir
+
+# --- Centralized function for configuration validation ---
+def validate_config_and_paths(config_module, mode, logger):
+    """
+    Validates key settings from the config module based on the run mode.
+    Args:
+        config_module: The imported config module.
+        mode (str): The mode of operation, e.g., 'train', 'evaluate', 'inference'.
+        logger: The logger instance to use for reporting errors.
+    Returns:
+        bool: True if validation passes, False otherwise.
+    """
+    is_valid = True
+    logger.info("--- Validating Configuration ---")
+
+    # Validate INPUTS_DIR
+    if not config_module.INPUTS_DIR.exists():
+        logger.error(f"Config Error: INPUTS_DIR does not exist at '{config_module.INPUTS_DIR}'.")
+        logger.error("Set the YOLO_COINS_INPUT_DIR environment variable or update config.py.")
+        is_valid = False
+
+    # Validate data split ratios
+    if not (0.999 < config_module.TRAIN_RATIO + config_module.VAL_RATIO + config_module.TEST_RATIO < 1.001):
+        logger.error("Config Error: TRAIN_RATIO, VAL_RATIO, and TEST_RATIO must sum to 1.0.")
+        is_valid = False
+
+    # Validate paths/settings specific to the run mode
+    if mode in ['evaluate', 'inference', 'train_direct_eval']:
+        model_path = config_module.MODEL_PATH_FOR_PREDICTION
+        if not model_path.exists():
+            logger.error(f"Config Error: MODEL_PATH_FOR_PREDICTION does not exist at '{model_path}'.")
+            is_valid = False
+
+    if mode == 'train':
+        if config_module.EPOCHS <= 0:
+            logger.error(f"Config Error: EPOCHS must be greater than 0 for a training run, but is set to {config_module.EPOCHS}.")
+            is_valid = False
+
+    if is_valid:
+        logger.info("Configuration validation successful.")
+    else:
+        logger.error("Configuration validation failed. Please correct the errors in config.py.")
+
+    return is_valid
+
 def discover_and_pair_image_labels(inputs_dir_pathobj, image_subdir_basename, label_subdir_basename, logger_instance=None):
     """Scans subdirectories for image and label folders, and creates pairs."""
     log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
@@ -88,6 +167,7 @@ def discover_and_pair_image_labels(inputs_dir_pathobj, image_subdir_basename, la
 def split_data(image_label_pairs, train_ratio, val_ratio, test_ratio, seed=42, logger_instance=None):
     """Splits image-label pairs into train, validation, and test sets."""
     log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
+    # The check for the sum of ratios is now also in the validation function, providing an earlier failure point.
     if not (0.999 < train_ratio + val_ratio + test_ratio < 1.001):
         log.error("Train, validation, and test ratios must sum to approximately 1.0.")
         raise ValueError("Ratios must sum to 1.0.")
