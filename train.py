@@ -130,7 +130,8 @@ def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, lo
     run_dir = Path(results.save_dir)
     best_model_path = _find_best_model(model, run_dir, logger)
 
-    if config.EVALUATE_AFTER_TRAINING and best_model_path:
+
+    if best_model_path:
         eval_dir = run_dir / "post_train_detailed_evaluation"
         eval_dir.mkdir(parents=True, exist_ok=True)
         

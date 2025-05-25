@@ -6,16 +6,13 @@ import csv
 import config
 
 from utils import (
-    setup_logging, copy_log_to_run_directory,
-    discover_and_pair_image_labels, parse_yolo_annotations,
-    calculate_iou, draw_error_annotations, load_class_names_from_yaml,
-    create_yolo_dataset_yaml, validate_config_and_paths,
-    create_unique_run_dir, create_detector_from_config
+    parse_yolo_annotations,
+    calculate_iou, 
+    draw_error_annotations
 )
 from detector import CoinDetector
 
 class YoloEvaluator:
-    # --- REFACTORED: Accept a pre-built detector object ---
     def __init__(self, detector, logger, config_module=config):
         """
         Initializes the YoloEvaluator.
@@ -115,72 +112,3 @@ class YoloEvaluator:
                 self.logger.error(f"Failed to write CSV: {e}")
 
         self.logger.info(f"--- Evaluation Finished for Model: {model_path_to_eval} ---")
-
-def main_evaluate():
-    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    main_log = config.OUTPUT_DIR / f"{config.LOG_FILE_BASE_NAME}_evaluate.log"
-    logger = setup_logging(main_log, logger_name='yolo_eval_logger')
-
-    if not validate_config_and_paths(config, 'evaluate', logger):
-        return
-
-    run_name = f"{config.MODEL_PATH_FOR_PREDICTION.stem}_evaluation_run"
-    eval_dir = config.OUTPUT_DIR / "evaluation_runs"
-    run_dir = create_unique_run_dir(eval_dir, run_name)
-
-    logger.info("--- Standalone Evaluation Start ---")
-    logger.info(f"Saving to: {run_dir}")
-    logger.info(f"Evaluating: {config.MODEL_PATH_FOR_PREDICTION}")
-
-    class_names = load_class_names_from_yaml(config.INPUTS_DIR / config.ORIGINAL_DATA_YAML_NAME, logger)
-    if class_names is None:
-        return _exit_with_log(logger, main_log, run_dir, "Class names YAML missing.")
-
-    class_map = {i: str(n).strip() for i, n in enumerate(class_names)}
-    if not class_map:
-        return _exit_with_log(logger, main_log, run_dir, "Class names map is empty.")
-
-    pairs, _ = discover_and_pair_image_labels(config.INPUTS_DIR, config.IMAGE_SUBDIR_BASENAME,
-                                              config.LABEL_SUBDIR_BASENAME, logger)
-    if not pairs:
-        return _exit_with_log(logger, main_log, run_dir, "No image-label pairs found.")
-
-    # --- REFACTORED: Use the factory to create the detector ---
-    detector = create_detector_from_config(
-        config.MODEL_PATH_FOR_PREDICTION, class_map, config, logger
-    )
-    # --- REFACTORED: Pass the detector instance to the evaluator ---
-    evaluator = YoloEvaluator(detector, logger)
-
-    logger.info("--- YOLO Standard Evaluation (model.val) ---")
-    try:
-        rel_dirs = sorted({p.parent.relative_to(config.INPUTS_DIR) for p, _ in pairs})
-        yaml_path = run_dir / "eval_temp_dataset.yaml"
-        create_yolo_dataset_yaml(str(config.INPUTS_DIR), [], [], [str(d) for d in rel_dirs],
-                                 class_map, len(class_map), yaml_path,
-                                 config.IMAGE_SUBDIR_BASENAME, config.LABEL_SUBDIR_BASENAME, logger)
-
-        if yaml_path.exists():
-            # Use the model from the detector for the standard val method
-            evaluator.detector.model.val(data=str(yaml_path), split='test',
-                                         project=str(run_dir), name="standard_eval_results",
-                                         iou=config.BOX_MATCHING_IOU_THRESHOLD)
-        else:
-            logger.warning("Failed to generate dataset YAML for val().")
-    except Exception as e:
-        logger.exception("model.val() failed.")
-
-    evaluator.perform_detailed_evaluation(
-        eval_output_dir=run_dir,
-        all_image_label_pairs_eval=pairs
-    )
-
-    copy_log_to_run_directory(main_log, run_dir, f"{config.LOG_FILE_BASE_NAME}_evaluate_final.log", logger)
-    logger.info("--- Evaluation Complete ---")
-
-def _exit_with_log(logger, log_path, run_dir, msg):
-    logger.error(msg)
-    copy_log_to_run_directory(log_path, run_dir, f"{config.LOG_FILE_BASE_NAME}_evaluate_final.log", logger)
-
-if __name__ == '__main__':
-    main_evaluate()

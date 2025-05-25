@@ -1,176 +1,148 @@
-import logging
+import argparse
 from pathlib import Path
-from ultralytics import YOLO
+import cv2
+import logging
 
-# Project-specific modules
-import config
-from utils import (
-    setup_logging, copy_log_to_run_directory,
-    discover_and_pair_image_labels, split_data,
-    get_unique_class_ids, load_class_names_from_yaml,
-    create_yolo_dataset_yaml, validate_config_and_paths,
-    create_unique_run_dir, create_detector_from_config
-)
-from evaluate_model import YoloEvaluator
+try:
+    import config
+    from utils import (
+        setup_logging, load_class_names_from_yaml, 
+        create_detector_from_config,
+        validate_config_and_paths
+    )
+except ImportError as e:
+    print(f"ImportError: {e}. Make sure config.py, utils.py, and detector.py are in the same directory or PYTHONPATH")
+    exit()
 
-def main_train():
+# --- A dedicated class for handling the inference process ---
+class InferenceRunner:
+    """
+    Encapsulates the logic for running inference using a CoinDetector.
+    """
+    def __init__(self, detector, logger, config_module=config):
+        """
+        Initializes the InferenceRunner.
+        Args:
+            detector (CoinDetector): A pre-configured instance of CoinDetector.
+            logger: A logger instance.
+            config_module: The configuration module.
+        """
+        self.detector = detector
+        self.logger = logger
+        self.config = config_module
+
+    def _get_images_to_process(self, input_source_path):
+        """Determines the list of image file paths to process."""
+        images_to_process = []
+        image_extensions = ['*.jpg', '*.jpeg', '*.png']
+
+        if not input_source_path:
+            self.logger.info(f"No input path provided. Defaulting to config.INPUTS_DIR: {self.config.INPUTS_DIR}")
+            input_source_path = self.config.INPUTS_DIR
+
+        provided_path = Path(input_source_path)
+
+        if not provided_path.exists():
+            self.logger.error(f"Provided input path does not exist: {provided_path}")
+            return []
+
+        if provided_path.is_file():
+            if provided_path.suffix.lower() in [ext.replace('*', '') for ext in image_extensions]:
+                images_to_process.append(provided_path)
+            else:
+                self.logger.error(f"Provided file is not a supported image type: {provided_path}")
+        elif provided_path.is_dir():
+            self.logger.info(f"Recursively searching for images in: {provided_path}")
+            for ext in image_extensions:
+                # --- FIXED: Changed glob to rglob for recursive search ---
+                images_to_process.extend(list(provided_path.rglob(ext)))
+        
+        if not images_to_process:
+            self.logger.warning(f"No images found for path: {provided_path}")
+            
+        return images_to_process
+
+    def run(self, input_source_path=None):
+        """
+        Runs inference on a source and saves the annotated outputs.
+        Args:
+            input_source_path (str, optional): Path to a file or directory.
+        """
+        self.logger.info("--- Starting Inference Run ---")
+        images_to_process = self._get_images_to_process(input_source_path)
+
+        if not images_to_process:
+            self.logger.info("No images to process. Exiting run.")
+            return
+
+        self.logger.info(f"Found {len(images_to_process)} image(s) to process.")
+        
+        output_image_dir = self.config.OUTPUT_DIR / "inference_outputs"
+        output_image_dir.mkdir(parents=True, exist_ok=True)
+        self.logger.info(f"Annotated images will be saved to: {output_image_dir}")
+
+        for image_path in images_to_process:
+            self.logger.info(f"-> Processing: {image_path.name}")
+            try:
+                image_np = cv2.imread(str(image_path))
+                if image_np is None:
+                    self.logger.error(f"Failed to read image: {image_path}")
+                    continue
+
+                final_predictions = self.detector.predict(image_np)
+                self.logger.info(f"  Detected {len(final_predictions)} objects.")
+
+                image_with_predictions = self.detector.draw_predictions_on_image(image_np, final_predictions)
+                
+                output_image_path = output_image_dir / f"{image_path.stem}_inferred{image_path.suffix}"
+                cv2.imwrite(str(output_image_path), image_with_predictions)
+                self.logger.info(f"  Saved annotated image to: {output_image_path}")
+                
+            except Exception as e:
+                self.logger.exception(f"An error occurred during inference on {image_path}:")
+        
+        self.logger.info("--- Inference Run Finished ---")
+
+
+def main():
+    """
+    Main function to set up and run the inference process from the command line.
+    """
+    parser = argparse.ArgumentParser(description="Run inference with a trained YOLO model.")
+    parser.add_argument(
+        "input_path", 
+        type=str, 
+        nargs='?', 
+        default=None, 
+        help="Path to an image file or a folder of images. If not provided, uses INPUTS_DIR from config.py."
+    )
+    args = parser.parse_args()
+
+    # --- Setup ---
     config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    main_log_file = config.OUTPUT_DIR / f"{config.LOG_FILE_BASE_NAME}_train_or_direct_eval.log"
-    logger = setup_logging(main_log_file, logger_name='yolo_main_script_logger')
-    final_log_suffix = "_train_or_direct_eval_final.log"
+    log_file = config.OUTPUT_DIR / f"{config.LOG_FILE_BASE_NAME}_inference.log"
+    logger = setup_logging(log_file, logger_name='yolo_inference_logger')
 
-    is_training_mode = config.EPOCHS > 0
-    validation_mode = 'train' if is_training_mode else 'train_direct_eval'
-    if not validate_config_and_paths(config, validation_mode, logger):
+    if not validate_config_and_paths(config, 'inference', logger):
         return
 
+    # --- Load Class Names ---
+    class_names_yaml_path = config.INPUTS_DIR / config.ORIGINAL_DATA_YAML_NAME
+    names_from_yaml = load_class_names_from_yaml(class_names_yaml_path, logger)
+    if names_from_yaml is None:
+        logger.error(f"CRITICAL: Could not load class names from '{class_names_yaml_path}'. Exiting.")
+        return
+    class_names_map = {i: str(name).strip() for i, name in enumerate(names_from_yaml)}
+
+    # --- Create Detector and Runner Instances ---
     try:
-        logger.info("--- Step 0 & 1: Data Preparation & Class Names ---")
-        image_label_pairs, label_dirs = discover_and_pair_image_labels(
-            config.INPUTS_DIR, config.IMAGE_SUBDIR_BASENAME, config.LABEL_SUBDIR_BASENAME, logger
+        detector = create_detector_from_config(
+            config.MODEL_PATH_FOR_PREDICTION, class_names_map, config, logger
         )
-        if not image_label_pairs:
-            raise FileNotFoundError("No image-label pairs found. Check INPUTS_DIR and its structure.")
-
-        class_names_map, num_classes = load_or_derive_class_names(label_dirs, logger)
-        if num_classes == 0:
-            raise ValueError("Number of classes is zero. Cannot proceed.")
-
-        logger.info(f"Final number of classes: {num_classes}")
-        logger.info(f"Class names map: {class_names_map}")
-
-        if is_training_mode:
-            run_training_workflow(image_label_pairs, class_names_map, num_classes, main_log_file, logger)
-        else:
-            run_direct_evaluation_workflow(image_label_pairs, class_names_map, main_log_file, logger)
-
-    except (FileNotFoundError, ValueError) as e:
-        finalize_and_exit(logger, main_log_file, None, f"A pre-run error occurred: {e}", final_log_suffix)
-    except RuntimeError as e:
-        finalize_and_exit(logger, main_log_file, None, f"A critical runtime error occurred: {e}", final_log_suffix)
+        runner = InferenceRunner(detector, logger)
+        runner.run(args.input_path)
     except Exception as e:
-        logger.exception("An unexpected error occurred during the main workflow.")
-        finalize_and_exit(logger, main_log_file, None, f"An unexpected error occurred: {e}", final_log_suffix)
-
-def load_or_derive_class_names(label_dirs, logger):
-    names_from_yaml = load_class_names_from_yaml(config.INPUTS_DIR / config.ORIGINAL_DATA_YAML_NAME, logger)
-    if names_from_yaml is not None:
-        return {i: str(name).strip() for i, name in enumerate(names_from_yaml)}, len(names_from_yaml)
-
-    logger.warning("Falling back to deriving class names from labels.")
-    if not label_dirs:
-        return {}, 0
-
-    unique_ids = get_unique_class_ids(label_dirs, logger)
-    if not unique_ids:
-        return {}, 0
-
-    num_classes = max(unique_ids) + 1
-    return {i: f"class_{i}" for i in range(num_classes)}, num_classes
-
-def finalize_and_exit(logger, main_log_file, run_dir, message, final_log_suffix):
-    logger.error(message)
-    copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}{final_log_suffix}", logger)
-    return
-
-def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, logger):
-    logger.info("--- Starting Training ---")
-
-    # --- FIXED: Used keyword arguments to prevent passing logger as seed ---
-    train_pairs, val_pairs, test_pairs = split_data(
-        image_label_pairs=pairs, 
-        train_ratio=config.TRAIN_RATIO, 
-        val_ratio=config.VAL_RATIO, 
-        test_ratio=config.TEST_RATIO, 
-        logger_instance=logger
-    )
-    dataset_yaml_path = config.OUTPUT_DIR / config.DATASET_YAML_NAME
-
-    create_yolo_dataset_yaml(
-        str(config.INPUTS_DIR),
-        _rel_dirs(train_pairs),
-        _rel_dirs(val_pairs),
-        _rel_dirs(test_pairs),
-        class_names_map,
-        num_classes,
-        dataset_yaml_path,
-        config.IMAGE_SUBDIR_BASENAME,
-        config.LABEL_SUBDIR_BASENAME,
-        logger
-    )
-
-    if not dataset_yaml_path.exists():
-        raise FileNotFoundError(f"Dataset YAML creation failed. Expected at: {dataset_yaml_path}")
-
-    model = YOLO(config.MODEL_NAME_FOR_TRAINING)
-    training_dir = config.OUTPUT_DIR / "training_runs"
-    training_dir.mkdir(parents=True, exist_ok=True)
-
-    run_name = f"{Path(config.MODEL_NAME_FOR_TRAINING).stem}_custom_training"
-    train_args = {
-        'data': str(dataset_yaml_path),
-        'epochs': config.EPOCHS,
-        'imgsz': config.IMG_SIZE,
-        'project': str(training_dir),
-        'name': run_name,
-        'optimizer': config.TRAINING_OPTIMIZER,
-        'lr0': config.TRAINING_LR0,
-        'lrf': config.TRAINING_LRF,
-        'exist_ok': False,
-    }
-    train_args.update(config.AUGMENTATION_PARAMS)
-
-    results = model.train(**train_args)
-    run_dir = Path(results.save_dir)
-    best_model_path = _find_best_model(model, run_dir, logger)
-
-    if config.EVALUATE_AFTER_TRAINING and best_model_path:
-        eval_dir = run_dir / "post_train_detailed_evaluation"
-        eval_dir.mkdir(parents=True, exist_ok=True)
-        
-        detector = create_detector_from_config(best_model_path, class_names_map, config, logger)
-        evaluator = YoloEvaluator(detector, logger)
-        
-        evaluator.perform_detailed_evaluation(
-            eval_output_dir=eval_dir,
-            all_image_label_pairs_eval=pairs
-        )
-
-    copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}_train_final.log", logger)
-
-def run_direct_evaluation_workflow(pairs, class_names_map, main_log_file, logger):
-    logger.info("--- Starting Direct Evaluation ---")
-    model_path = config.MODEL_PATH_FOR_PREDICTION
-
-    base_dir = config.OUTPUT_DIR / "direct_evaluation_runs"
-    run_name_prefix = f"{model_path.stem}_direct_eval_run"
-    run_dir = create_unique_run_dir(base_dir, run_name_prefix)
-    logger.info(f"Created unique run directory: {run_dir}")
-    
-    detector = create_detector_from_config(model_path, class_names_map, config, logger)
-    evaluator = YoloEvaluator(detector, logger)
-
-    evaluator.perform_detailed_evaluation(
-        eval_output_dir=run_dir,
-        all_image_label_pairs_eval=pairs
-    )
-
-    copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}_direct_eval_final.log", logger)
-
-def _rel_dirs(pairs):
-    return sorted({p.parent.relative_to(config.INPUTS_DIR) for p, _ in pairs})
-
-def _find_best_model(model, run_dir, logger):
-    if hasattr(model, 'trainer') and hasattr(model.trainer, 'best') and Path(model.trainer.best).exists():
-        path = Path(model.trainer.best).resolve()
-        logger.info(f"Best model from trainer: {path}")
-        return path
-    fallback = run_dir / "weights" / "best.pt"
-    if fallback.exists():
-        logger.info(f"Best model found at fallback path: {fallback}")
-        return fallback.resolve()
-    logger.warning("No best model found.")
-    return None
+        logger.exception(f"A critical error occurred during setup or execution: {e}")
 
 if __name__ == '__main__':
-    main_train()
+    main()

@@ -1,7 +1,11 @@
 from pathlib import Path
+import os
 
 # --- Base Paths ---
-INPUTS_DIR = Path("/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v38i.yolov5pytorch")
+# Allow overriding the input directory via an environment variable for portability.
+# Fallback to the original hardcoded path if the env var is not set.
+INPUTS_DIR_ENV = os.getenv("YOLO_COINS_INPUT_DIR")
+INPUTS_DIR = Path(INPUTS_DIR_ENV) if INPUTS_DIR_ENV else Path("/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v38i.yolov5pytorch")
     # Example expected structure for INPUTS_DIR:
     # INPUTS_DIR/
     #  ├── data.yaml (ORIGINAL_DATA_YAML_NAME)
@@ -45,9 +49,6 @@ IMG_SIZE = 640
 TRAINING_OPTIMIZER = 'Adam' # Default is 'SGD', or 'AdamW'
 TRAINING_LR0 = 0.0001 # Initial learning rate
 TRAINING_LRF = 1.00 # Final OneCycleLR learning rate (lr0 * lrf)
-
-EVALUATE_AFTER_TRAINING = True # If True, train.py will run detailed evaluation on the best model
-
 
 # --- Data Split Ratios ---
 TRAIN_RATIO = 0.7
