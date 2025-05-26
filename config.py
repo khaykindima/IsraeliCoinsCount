@@ -33,6 +33,7 @@ INCORRECT_PREDICTIONS_SUBDIR = "incorrect_predictions"
 LOG_FILE_BASE_NAME = "run_log" # Will be appended with script type, e.g., train_run_log.log
 PREDICTIONS_CSV_NAME = "predictions_summary.csv"
 METRICS_JSON_NAME = "final_evaluation_metrics.json" # Name for the metrics JSON file
+CONFUSION_MATRIX_PLOT_NAME = "confusion_matrix.png" # Filename for the saved plot
 
 # --- Model Configuration ---
 # MODEL_NAME_FOR_TRAINING can be a base model like "yolov8n.pt" to start fresh,
@@ -89,9 +90,9 @@ PER_CLASS_CONF_THRESHOLDS = {
 
 # --- Metrics Calculation ---
 # Specify which metrics to calculate and report. 
-# Options: 'precision', 'recall', 'f1_score'. Add more as implemented.
-# If empty or None, all available core metrics will be calculated by default.
-REQUESTED_METRICS = ['precision', 'recall', 'f1_score'] 
+# Options: 'precision', 'recall', 'f1_score', 'confusion_matrix'.
+# If empty or None, all available core metrics (P, R, F1, CM) will be calculated.
+REQUESTED_METRICS = ['precision', 'recall', 'f1_score', 'confusion_matrix'] 
 
 # --- Drawing Configuration ---
 # Colors are in BGR format

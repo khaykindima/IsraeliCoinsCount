@@ -41,46 +41,65 @@ class YoloEvaluator:
         csv_rows = []
         error_count = 0
 
-        # --- ADDED: Initialize the new metrics calculator ---
-        metrics_calc = DetectionMetricsCalculator(class_names_map_eval, self.logger)
+        # --- Initialize the metrics calculator, passing the config module ---
+        metrics_calc = DetectionMetricsCalculator(
+            class_names_map_eval, 
+            self.logger, 
+            config_module=self.config # Pass the config here
+        )
 
         for img_path, lbl_path in all_image_label_pairs_eval:
             self.logger.info(f"Processing: {img_path.name}")
-            img = cv2.imread(str(img_path))
-            if img is None:
+            # Make a local copy of the original image for drawing if needed
+            original_img_for_drawing = cv2.imread(str(img_path))
+            if original_img_for_drawing is None:
                 self.logger.error(f"Cannot read image: {img_path}")
                 continue
-
-            preds_from_detector = self.detector.predict(img.copy()) # These are the "final" predictions
+            
+            # Pass a copy to predict if the predict method might alter the image
+            # (though usually predict methods don't alter input arrays)
+            img_for_prediction = original_img_for_drawing.copy()
+            
+            # This is single-image prediction
+            preds_from_detector = self.detector.predict(img_for_prediction) 
             gts_raw = parse_yolo_annotations(lbl_path, self.logger)
-            h, w = img.shape[:2]
+            h, w = original_img_for_drawing.shape[:2]
 
-            current_gts_for_image = []
+            current_gts_for_image_dicts = []
             # Store GTs for the current image and update total GT counts in calculator
             for gt_class_id, gt_cx, gt_cy, gt_w, gt_h in gts_raw:
-                current_gts_for_image.append({
+                gt_data = {
                     'cls': gt_class_id,
                     'xyxy': [(gt_cx - gt_w/2) * w, (gt_cy - gt_h/2) * h,
                              (gt_cx + gt_w/2) * w, (gt_cy + gt_h/2) * h],
-                    'matched': False # For matching within this image
-                })
+                    'matched': False # For P/R/F1 matching within this image
+                }
+                current_gts_for_image_dicts.append(gt_data)
                 metrics_calc.update_stats(class_id=gt_class_id, gt_delta=1)
+            
+            # --- ADDED: Update Confusion Matrix for the current image ---
+            # `preds_from_detector` is list of {'xyxy', 'conf', 'cls', 'class_name'}
+            # `current_gts_for_image_dicts` is list of {'cls', 'xyxy', 'matched'}
+            # The `update_confusion_matrix` method in `DetectionMetricsCalculator` handles format conversion
+            if self.config.REQUESTED_METRICS is None or \
+               'confusion_matrix' in self.config.REQUESTED_METRICS:
+                metrics_calc.update_confusion_matrix(preds_from_detector, current_gts_for_image_dicts)
             
             img_tp_count = 0
             img_fp_count_details = {} # class_id -> count
             
             final_preds_with_status = [] # To store preds with their TP/FP status for this image
 
-            # Match predictions to ground truths for the current image
+            # Match predictions to ground truths for P/R/F1 calculation
             for p_data in sorted(preds_from_detector, key=lambda x: x['conf'], reverse=True):
                 is_tp = False
                 pred_class_id = p_data['cls']
 
-                for gt_idx, gt_data in enumerate(current_gts_for_image):
+                for gt_idx, gt_data in enumerate(current_gts_for_image_dicts):
                     if not gt_data['matched'] and pred_class_id == gt_data['cls']:
                         iou = calculate_iou(p_data['xyxy'], gt_data['xyxy'])
                         if iou > self.config.BOX_MATCHING_IOU_THRESHOLD:
-                            current_gts_for_image[gt_idx]['matched'] = True
+                            current_gts_for_image_dicts[gt_idx]['matched'] = True
                             is_tp = True
                             break 
                 
@@ -97,7 +116,7 @@ class YoloEvaluator:
 
             # Calculate and update False Negatives for the current image
             img_fn_details_for_drawing = [] # For drawing
-            for gt_data in current_gts_for_image:
+            for gt_data in current_gts_for_image_dicts:
                 if not gt_data['matched']:
                     metrics_calc.update_stats(class_id=gt_data['cls'], fn_delta=1)
                     img_fn_details_for_drawing.append(gt_data)
@@ -114,7 +133,8 @@ class YoloEvaluator:
                 fp_preds_to_draw = [p for p in final_preds_with_status if p['status'] == "Incorrect (FP)"]
                 
                 annotated_img = draw_error_annotations(
-                    img.copy(), fp_preds_to_draw, img_fn_details_for_drawing, 
+                    original_img_for_drawing.copy(), # Use the original image loaded at start of loop
+                    fp_preds_to_draw, img_fn_details_for_drawing, 
                     class_names_map_eval, self.config.BOX_COLOR_MAP, 
                     self.config.DEFAULT_BOX_COLOR, self.logger
                 )
@@ -139,7 +159,8 @@ class YoloEvaluator:
         # --- MODIFIED: Use the metrics calculator ---
         self.logger.info("--- Final Metrics (based on CoinDetector's output) ---")
         final_metrics_results = metrics_calc.compute_metrics(
-            requested_metrics=self.config.REQUESTED_METRICS
+            requested_metrics=self.config.REQUESTED_METRICS,
+            eval_output_dir=eval_output_dir 
         )
 
         # Log the computed metrics
@@ -165,12 +186,17 @@ class YoloEvaluator:
             if 'f1_score_micro' in overall_metrics: log_line_overall += f", F1-score (Micro): {overall_metrics['f1_score_micro']:.4f}"
             self.logger.info(log_line_overall)
 
-        # Save metrics to the JSON file (using name from config)
+        # Log confusion matrix info if present
+        if final_metrics_results.get('confusion_matrix_data') is not None:
+            self.logger.info(f"Confusion Matrix Data (raw array) also saved in JSON.")
+        if final_metrics_results.get('confusion_matrix_plot_path_info'): # Check for the info string
+             self.logger.info(final_metrics_results['confusion_matrix_plot_path_info'])
+
         metrics_file_path = eval_output_dir / self.config.METRICS_JSON_NAME
         try:
             with open(metrics_file_path, 'w') as f:
                 json.dump(final_metrics_results, f, indent=4)
-            self.logger.info(f"Saved final metrics to: {metrics_file_path}")
+            self.logger.info(f"Saved final metrics dictionary to: {metrics_file_path}")
         except Exception as e:
             self.logger.error(f"Failed to save final metrics JSON: {e}")
 

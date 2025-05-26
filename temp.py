@@ -1,243 +1,185 @@
 import logging
 from pathlib import Path
-from ultralytics import YOLO
+import cv2
+import csv
+import json 
 
-# Project-specific modules
-import config
+import config # Assuming this is your project's config.py
+
 from utils import (
-    setup_logging, copy_log_to_run_directory,
-    discover_and_pair_image_labels, split_data,
-    get_unique_class_ids, load_class_names_from_yaml,
-    create_yolo_dataset_yaml, validate_config_and_paths,
-    create_unique_run_dir, create_detector_from_config
+    parse_yolo_annotations,
+    calculate_iou, 
+    draw_error_annotations
 )
-from evaluate_model import YoloEvaluator
+from metrics_calculator import DetectionMetricsCalculator
 
-def main_train():
-    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    main_log_file = config.OUTPUT_DIR / f"{config.LOG_FILE_BASE_NAME}_train_or_direct_eval.log"
-    logger = setup_logging(main_log_file, logger_name='yolo_main_script_logger')
-    final_log_suffix = "_train_or_direct_eval_final.log"
+class YoloEvaluator:
+    def __init__(self, detector, logger, config_module=config):
+        self.logger = logger
+        self.config = config_module 
+        self.detector = detector
 
-    is_training_mode = config.EPOCHS > 0
-    validation_mode = 'train' if is_training_mode else 'train_direct_eval'
-    if not validate_config_and_paths(config, validation_mode, logger):
-        return
+    def perform_detailed_evaluation(self, eval_output_dir, all_image_label_pairs_eval):
+        model_path_to_eval = self.detector.model_path
+        class_names_map_eval = self.detector.class_names_map
 
-    try:
-        logger.info("--- Step 0 & 1: Data Preparation & Class Names ---")
-        image_label_pairs, label_dirs = discover_and_pair_image_labels(
-            config.INPUTS_DIR, config.IMAGE_SUBDIR_BASENAME, config.LABEL_SUBDIR_BASENAME, logger
-        )
-        if not image_label_pairs:
-            raise FileNotFoundError("No image-label pairs found. Check INPUTS_DIR and its structure.")
+        self.logger.info(f"--- Starting Detailed Evaluation for Model: {model_path_to_eval} ---")
+        self.logger.info(f"Evaluation outputs will be saved in: {eval_output_dir}")
 
-        class_names_map, num_classes = load_or_derive_class_names(label_dirs, logger)
-        if num_classes == 0:
-            raise ValueError("Number of classes is zero. Cannot proceed.")
+        incorrect_dir = eval_output_dir / self.config.INCORRECT_PREDICTIONS_SUBDIR
+        incorrect_dir.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"Final number of classes: {num_classes}")
-        logger.info(f"Class names map: {class_names_map}")
+        csv_rows = []
+        error_count = 0
 
-        if is_training_mode:
-            run_training_workflow(image_label_pairs, class_names_map, num_classes, main_log_file, logger)
-        else:
-            run_direct_evaluation_workflow(image_label_pairs, class_names_map, main_log_file, logger)
-
-    except (FileNotFoundError, ValueError) as e:
-        finalize_and_exit(logger, main_log_file, None, f"A pre-run error occurred: {e}", final_log_suffix)
-    except RuntimeError as e:
-        finalize_and_exit(logger, main_log_file, None, f"A critical runtime error occurred: {e}", final_log_suffix)
-    except Exception as e:
-        logger.exception("An unexpected error occurred during the main workflow.")
-        finalize_and_exit(logger, main_log_file, None, f"An unexpected error occurred: {e}", final_log_suffix)
-
-def load_or_derive_class_names(label_dirs, logger):
-    names_from_yaml = load_class_names_from_yaml(config.INPUTS_DIR / config.ORIGINAL_DATA_YAML_NAME, logger)
-    if names_from_yaml is not None:
-        return {i: str(name).strip() for i, name in enumerate(names_from_yaml)}, len(names_from_yaml)
-
-    logger.warning("Falling back to deriving class names from labels.")
-    if not label_dirs:
-        return {}, 0
-
-    unique_ids = get_unique_class_ids(label_dirs, logger)
-    if not unique_ids:
-        return {}, 0
-
-    num_classes = max(unique_ids) + 1
-    return {i: f"class_{i}" for i in range(num_classes)}, num_classes
-
-def finalize_and_exit(logger, main_log_file, run_dir, message, final_log_suffix):
-    logger.error(message)
-    copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}{final_log_suffix}", logger)
-    return
-
-def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, logger):
-    logger.info("--- Starting Training ---")
-
-    train_pairs, val_pairs, test_pairs = split_data(
-        image_label_pairs=pairs, 
-        train_ratio=config.TRAIN_RATIO, 
-        val_ratio=config.VAL_RATIO, 
-        test_ratio=config.TEST_RATIO, 
-        logger_instance=logger
-    )
-    dataset_yaml_path = config.OUTPUT_DIR / config.DATASET_YAML_NAME
-
-    create_yolo_dataset_yaml(
-        str(config.INPUTS_DIR),
-        _rel_dirs(train_pairs),
-        _rel_dirs(val_pairs),
-        _rel_dirs(test_pairs),
-        class_names_map,
-        num_classes,
-        dataset_yaml_path,
-        config.IMAGE_SUBDIR_BASENAME,
-        config.LABEL_SUBDIR_BASENAME,
-        logger
-    )
-
-    if not dataset_yaml_path.exists():
-        raise FileNotFoundError(f"Dataset YAML creation failed. Expected at: {dataset_yaml_path}")
-
-    model = YOLO(config.MODEL_NAME_FOR_TRAINING)
-    training_dir = config.OUTPUT_DIR / "training_runs"
-    training_dir.mkdir(parents=True, exist_ok=True)
-
-    run_name = f"{Path(config.MODEL_NAME_FOR_TRAINING).stem}_custom_training"
-    train_args = {
-        'data': str(dataset_yaml_path),
-        'epochs': config.EPOCHS,
-        'imgsz': config.IMG_SIZE,
-        'project': str(training_dir),
-        'name': run_name,
-        'optimizer': config.TRAINING_OPTIMIZER,
-        'lr0': config.TRAINING_LR0,
-        'lrf': config.TRAINING_LRF,
-        'exist_ok': False,
-    }
-    train_args.update(config.AUGMENTATION_PARAMS)
-
-    results = model.train(**train_args)
-    run_dir = Path(results.save_dir) # This is the specific run directory from Ultralytics
-    best_model_path = _find_best_model(model, run_dir, logger)
-
-    # Evaluation will now always run if a model was successfully trained.
-    if best_model_path:
-        eval_output_dir = run_dir / "custom_detailed_evaluation" # Save custom eval in its own subfolder
-        eval_output_dir.mkdir(parents=True, exist_ok=True)
-        
-        detector = create_detector_from_config(best_model_path, class_names_map, config, logger)
-        evaluator = YoloEvaluator(detector, logger)
-        
-        logger.info(f"--- Starting Custom Detailed Evaluation (Post-Training) ---")
-        evaluator.perform_detailed_evaluation(
-            eval_output_dir=eval_output_dir,
-            all_image_label_pairs_eval=pairs # Evaluate on all available pairs for detailed report
+        metrics_calc = DetectionMetricsCalculator(
+            class_names_map_eval, 
+            self.logger, 
+            config_module=self.config
         )
 
-    copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}_train_final.log", logger)
+        for img_path, lbl_path in all_image_label_pairs_eval:
+            self.logger.info(f"Processing: {img_path.name}")
+            original_img_for_drawing = cv2.imread(str(img_path))
+            if original_img_for_drawing is None:
+                self.logger.error(f"Cannot read image: {img_path}")
+                continue
+            
+            img_for_prediction = original_img_for_drawing.copy()
+            
+            preds_from_detector = self.detector.predict(img_for_prediction) 
+            gts_raw = parse_yolo_annotations(lbl_path, self.logger)
+            h, w = original_img_for_drawing.shape[:2]
 
-def run_direct_evaluation_workflow(pairs, class_names_map, main_log_file, logger):
-    logger.info("--- Starting Direct Evaluation Workflow ---")
-    model_path = config.MODEL_PATH_FOR_PREDICTION
+            current_gts_for_image_dicts = []
+            for gt_class_id, gt_cx, gt_cy, gt_w, gt_h in gts_raw:
+                gt_data = {
+                    'cls': gt_class_id,
+                    'xyxy': [(gt_cx - gt_w/2) * w, (gt_cy - gt_h/2) * h,
+                             (gt_cx + gt_w/2) * w, (gt_cy + gt_h/2) * h],
+                    'matched': False 
+                }
+                current_gts_for_image_dicts.append(gt_data)
+                metrics_calc.update_stats(class_id=gt_class_id, gt_delta=1)
+            
+            # --- FIXED: Condition to call update_confusion_matrix ---
+            # Check if confusion matrix processing is requested based on the new logic
+            should_update_cm = False
+            if self.config.REQUESTED_METRICS is None or not self.config.REQUESTED_METRICS: # If list is None or empty, CM is a default
+                should_update_cm = True
+            elif isinstance(self.config.REQUESTED_METRICS, list) and \
+                 'confusion_matrix' in [m.lower() for m in self.config.REQUESTED_METRICS]:
+                should_update_cm = True
+            
+            if should_update_cm:
+                self.logger.debug(f"Updating confusion matrix for image: {img_path.name}")
+                metrics_calc.update_confusion_matrix(preds_from_detector, current_gts_for_image_dicts)
+            else:
+                self.logger.debug(f"Skipping confusion matrix update for image: {img_path.name} as not requested.")
+            # --- End of fix ---
+            
+            img_tp_count = 0
+            img_fp_count_details = {} 
+            final_preds_with_status = []
 
-    base_dir = config.OUTPUT_DIR / "direct_evaluation_runs"
-    run_name_prefix = f"{model_path.stem}_direct_eval_run"
-    run_dir = create_unique_run_dir(base_dir, run_name_prefix) # This is our main output dir for this eval run
-    logger.info(f"Direct evaluation run directory: {run_dir}")
-    
-    detector = create_detector_from_config(model_path, class_names_map, config, logger)
-    
-    # --- ADDED: Standard Ultralytics Evaluation (model.val()) ---
-    logger.info("--- Starting Standard Ultralytics Evaluation (model.val()) ---")
-    try:
-        # Create a temporary dataset.yaml for model.val()
-        # model.val() typically uses 'val' or 'test' split.
-        # For consistency with how perform_detailed_evaluation uses all pairs,
-        # we'll point the 'test' key in the temp YAML to all image directories.
-        temp_yaml_path = run_dir / "temp_dataset_for_ultralytics_val.yaml"
-        # _rel_dirs gets unique parent directories of images relative to INPUTS_DIR
-        image_dirs_for_yaml = _rel_dirs(pairs) 
-        
-        num_classes_for_yaml = len(class_names_map)
-        if not class_names_map and pairs: # Try to infer if map is empty but pairs exist
-             _, temp_label_dirs = zip(*pairs) if pairs else ([],[])
-             temp_unique_ids = get_unique_class_ids(list(set(Path(p).parent for p in temp_label_dirs)), logger)
-             if temp_unique_ids:
-                 num_classes_for_yaml = max(temp_unique_ids) + 1
+            for p_data in sorted(preds_from_detector, key=lambda x: x['conf'], reverse=True):
+                is_tp = False
+                pred_class_id = p_data['cls']
+                for gt_idx, gt_data in enumerate(current_gts_for_image_dicts):
+                    if not gt_data['matched'] and pred_class_id == gt_data['cls']:
+                        iou = calculate_iou(p_data['xyxy'], gt_data['xyxy'])
+                        if iou > self.config.BOX_MATCHING_IOU_THRESHOLD:
+                            current_gts_for_image_dicts[gt_idx]['matched'] = True
+                            is_tp = True
+                            break 
+                
+                if is_tp:
+                    metrics_calc.update_stats(class_id=pred_class_id, tp_delta=1)
+                    img_tp_count +=1
+                    status = "Correct (TP)"
+                else:
+                    metrics_calc.update_stats(class_id=pred_class_id, fp_delta=1)
+                    img_fp_count_details[pred_class_id] = img_fp_count_details.get(pred_class_id, 0) + 1
+                    status = "Incorrect (FP)"
+                final_preds_with_status.append({**p_data, 'status': status})
 
+            img_fn_details_for_drawing = []
+            for gt_data in current_gts_for_image_dicts:
+                if not gt_data['matched']:
+                    metrics_calc.update_stats(class_id=gt_data['cls'], fn_delta=1)
+                    img_fn_details_for_drawing.append(gt_data)
 
-        create_yolo_dataset_yaml(
-            dataset_root_abs_path_str=str(config.INPUTS_DIR.resolve()), # Absolute path for 'path' key
-            train_rel_img_dir_paths=[], # No train split for this temp YAML
-            val_rel_img_dir_paths=[],   # No val split for this temp YAML
-            test_rel_img_dir_paths=image_dirs_for_yaml, # Use all image dirs for 'test'
-            class_names_map=class_names_map,
-            num_classes_val=num_classes_for_yaml,
-            output_yaml_path_obj=temp_yaml_path,
-            image_subdir_basename=config.IMAGE_SUBDIR_BASENAME, # Not strictly needed for val if paths are direct
-            label_subdir_basename=config.LABEL_SUBDIR_BASENAME, # Not strictly needed for val if paths are direct
-            logger_instance=logger
+            for p_info in final_preds_with_status:
+                class_name = class_names_map_eval.get(p_info['cls'], f"ID_{p_info['cls']}")
+                csv_rows.append([img_path.name, class_name, f"{p_info['conf']:.4f}", p_info['status']])
+
+            num_img_fps = sum(img_fp_count_details.values())
+            if num_img_fps > 0 or len(img_fn_details_for_drawing) > 0:
+                error_count += 1
+                fp_preds_to_draw = [p for p in final_preds_with_status if p['status'] == "Incorrect (FP)"]
+                annotated_img = draw_error_annotations(
+                    original_img_for_drawing.copy(), 
+                    fp_preds_to_draw, img_fn_details_for_drawing, 
+                    class_names_map_eval, self.config.BOX_COLOR_MAP, 
+                    self.config.DEFAULT_BOX_COLOR, self.logger
+                )
+                out_path = incorrect_dir / img_path.name
+                try:
+                    cv2.imwrite(str(out_path), annotated_img)
+                except Exception as e:
+                    self.logger.error(f"Failed to save annotated error image {out_path}: {e}")
+
+        self.logger.info(f"Total images with errors (FP or FN): {error_count}")
+        if csv_rows:
+            csv_path = eval_output_dir / self.config.PREDICTIONS_CSV_NAME
+            try:
+                with open(csv_path, 'w', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(['Image Filename', 'Predicted Class', 'Probability', 'Box Correctness'])
+                    writer.writerows(csv_rows)
+                self.logger.info(f"Saved prediction CSV to: {csv_path}")
+            except Exception as e:
+                self.logger.error(f"Failed to write CSV: {e}")
+
+        self.logger.info("--- Final Metrics (based on CoinDetector's output) ---")
+        final_metrics_results = metrics_calc.compute_metrics(
+            requested_metrics=self.config.REQUESTED_METRICS,
+            eval_output_dir=eval_output_dir 
         )
 
-        if temp_yaml_path.exists():
-            logger.info(f"Running detector.model.val() with data: {temp_yaml_path}")
-            # The results of model.val() will be saved by Ultralytics in a subfolder
-            # named 'standard_ultralytics_eval_results' within 'run_dir'
-            detector.model.val(
-                data=str(temp_yaml_path),
-                split='test', # Corresponds to the key we used in temp_yaml_path
-                project=str(run_dir), 
-                name="standard_ultralytics_eval_results",
-                iou=config.BOX_MATCHING_IOU_THRESHOLD # Use configured IoU for NMS in val
+        for class_name, metrics in final_metrics_results.get('per_class', {}).items():
+            self.logger.info(f"Class: {class_name}")
+            log_line = f"  TP: {metrics.get('TP',0)}, FP: {metrics.get('FP',0)}, FN: {metrics.get('FN',0)} (GTs: {metrics.get('GT_count',0)})"
+            if 'precision' in metrics: log_line += f", Precision: {metrics['precision']:.4f}"
+            if 'recall' in metrics: log_line += f", Recall: {metrics['recall']:.4f}"
+            if 'f1_score' in metrics: log_line += f", F1-score: {metrics['f1_score']:.4f}"
+            self.logger.info(log_line)
+
+        overall_metrics = final_metrics_results.get('overall', {})
+        if overall_metrics:
+            self.logger.info("--- Overall Metrics ---")
+            log_line_overall = (
+                f"  Total TP: {overall_metrics.get('TP',0)}, "
+                f"Total FP: {overall_metrics.get('FP',0)}, "
+                f"Total FN: {overall_metrics.get('FN',0)} "
+                f"(Total GTs: {overall_metrics.get('GT_count',0)})"
             )
-            logger.info(f"Standard Ultralytics evaluation results saved in: {run_dir / 'standard_ultralytics_eval_results'}")
-        else:
-            logger.warning(f"Could not create temporary YAML for model.val() at {temp_yaml_path}. Skipping standard Ultralytics evaluation.")
-    except Exception as e:
-        logger.exception("An error occurred during standard Ultralytics evaluation (model.val()):")
-    # --- End of Standard Ultralytics Evaluation ---
+            if 'precision_micro' in overall_metrics: log_line_overall += f", Precision (Micro): {overall_metrics['precision_micro']:.4f}"
+            if 'recall_micro' in overall_metrics: log_line_overall += f", Recall (Micro): {overall_metrics['recall_micro']:.4f}"
+            if 'f1_score_micro' in overall_metrics: log_line_overall += f", F1-score (Micro): {overall_metrics['f1_score_micro']:.4f}"
+            self.logger.info(log_line_overall)
 
-    # --- Custom Detailed Evaluation ---
-    logger.info(f"--- Starting Custom Detailed Evaluation ---")
-    custom_eval_output_dir = run_dir / "custom_detailed_evaluation" # Save custom eval in its own subfolder
-    custom_eval_output_dir.mkdir(parents=True, exist_ok=True)
+        if final_metrics_results.get('confusion_matrix_data') is not None:
+            self.logger.info(f"Confusion Matrix Data (raw array) also saved in JSON.")
+        if final_metrics_results.get('confusion_matrix_plot_path_info'):
+             self.logger.info(final_metrics_results['confusion_matrix_plot_path_info'])
 
-    evaluator = YoloEvaluator(detector, logger)
-    evaluator.perform_detailed_evaluation(
-        eval_output_dir=custom_eval_output_dir,
-        all_image_label_pairs_eval=pairs
-    )
-    # --- End of Custom Detailed Evaluation ---
+        metrics_file_path = eval_output_dir / self.config.METRICS_JSON_NAME
+        try:
+            with open(metrics_file_path, 'w') as f:
+                json.dump(final_metrics_results, f, indent=4)
+            self.logger.info(f"Saved final metrics dictionary to: {metrics_file_path}")
+        except Exception as e:
+            self.logger.error(f"Failed to save final metrics JSON: {e}")
 
-    copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}_direct_eval_final.log", logger)
-
-def _rel_dirs(pairs):
-    """Gets unique parent directories of images, relative to config.INPUTS_DIR."""
-    if not pairs: return []
-    # Assuming pairs is list of (image_path_obj, label_path_obj)
-    # We need parent directory of image_path_obj
-    return sorted(list(set(p[0].parent.relative_to(config.INPUTS_DIR) for p in pairs)))
-
-
-def _find_best_model(model, run_dir, logger):
-    # run_dir here is the Ultralytics specific run directory (e.g., project/name)
-    if hasattr(model, 'trainer') and hasattr(model.trainer, 'best') and Path(model.trainer.best).exists():
-        path = Path(model.trainer.best).resolve()
-        logger.info(f"Best model from trainer: {path}")
-        return path
-    
-    # Fallback if trainer object doesn't have 'best' or it's not found
-    # Ultralytics saves weights typically in 'run_dir/weights/best.pt'
-    fallback_path = run_dir / "weights" / "best.pt"
-    if fallback_path.exists():
-        logger.info(f"Best model found at fallback path: {fallback_path}")
-        return fallback_path.resolve()
-        
-    logger.warning(f"No best model found in {run_dir}. Check training outputs.")
-    return None
-
-if __name__ == '__main__':
-    main_train()
+        self.logger.info(f"--- Detailed Evaluation Finished for Model: {model_path_to_eval} ---")
