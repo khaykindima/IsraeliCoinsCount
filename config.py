@@ -32,6 +32,7 @@ DATASET_YAML_NAME = "custom_dataset_for_training.yaml" # For YOLO training
 INCORRECT_PREDICTIONS_SUBDIR = "incorrect_predictions"
 LOG_FILE_BASE_NAME = "run_log" # Will be appended with script type, e.g., train_run_log.log
 PREDICTIONS_CSV_NAME = "predictions_summary.csv"
+METRICS_JSON_NAME = "final_evaluation_metrics.json" # Name for the metrics JSON file
 
 # --- Model Configuration ---
 # MODEL_NAME_FOR_TRAINING can be a base model like "yolov8n.pt" to start fresh,
@@ -44,7 +45,7 @@ MODEL_NAME_FOR_TRAINING = "yolov8n_best.pt" # You can change this to other YOLOv
 MODEL_PATH_FOR_PREDICTION = Path("yolov8n_best.pt") # Placeholder - update this to your actual best model path
 
 # --- Training Parameters ---
-EPOCHS = 1 # Set to >0 for training, 0 for prediction/evaluation only using MODEL_PATH_FOR_PREDICTION
+EPOCHS = 0 # Set to >0 for training, 0 for prediction/evaluation only using MODEL_PATH_FOR_PREDICTION
 IMG_SIZE = 640
 TRAINING_OPTIMIZER = 'Adam' # Default is 'SGD', or 'AdamW'
 TRAINING_LR0 = 0.0001 # Initial learning rate
@@ -85,6 +86,12 @@ PER_CLASS_CONF_THRESHOLDS = {
     "five": 0.35,
     "ten": 0.8,
 }
+
+# --- Metrics Calculation ---
+# Specify which metrics to calculate and report. 
+# Options: 'precision', 'recall', 'f1_score'. Add more as implemented.
+# If empty or None, all available core metrics will be calculated by default.
+REQUESTED_METRICS = ['precision', 'recall', 'f1_score'] 
 
 # --- Drawing Configuration ---
 # Colors are in BGR format

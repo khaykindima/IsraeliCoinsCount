@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 import cv2
 import csv
+import json # For saving metrics
 
 import config
 
@@ -10,7 +11,8 @@ from utils import (
     calculate_iou, 
     draw_error_annotations
 )
-from detector import CoinDetector
+# --- ADDED: Import the new metrics calculator ---
+from metrics_calculator import DetectionMetricsCalculator
 
 class YoloEvaluator:
     def __init__(self, detector, logger, config_module=config):
@@ -28,7 +30,7 @@ class YoloEvaluator:
     def perform_detailed_evaluation(self, eval_output_dir, all_image_label_pairs_eval):
         # Get model path and class map from the detector instance
         model_path_to_eval = self.detector.model_path
-        class_names_map_eval = self.detector.class_names_map
+        class_names_map_eval = self.detector.class_names_map # class_id (int) -> class_name (str)
 
         self.logger.info(f"--- Starting Detailed Evaluation for Model: {model_path_to_eval} ---")
         self.logger.info(f"Evaluation outputs will be saved in: {eval_output_dir}")
@@ -39,6 +41,9 @@ class YoloEvaluator:
         csv_rows = []
         error_count = 0
 
+        # --- ADDED: Initialize the new metrics calculator ---
+        metrics_calc = DetectionMetricsCalculator(class_names_map_eval, self.logger)
+
         for img_path, lbl_path in all_image_label_pairs_eval:
             self.logger.info(f"Processing: {img_path.name}")
             img = cv2.imread(str(img_path))
@@ -46,60 +51,80 @@ class YoloEvaluator:
                 self.logger.error(f"Cannot read image: {img_path}")
                 continue
 
-            preds = self.detector.predict(img.copy())
+            preds_from_detector = self.detector.predict(img.copy()) # These are the "final" predictions
             gts_raw = parse_yolo_annotations(lbl_path, self.logger)
             h, w = img.shape[:2]
 
-            gts = [{
-                'cls': gt[0],
-                'xyxy': [(gt[1] - gt[3]/2) * w, (gt[2] - gt[4]/2) * h,
-                         (gt[1] + gt[3]/2) * w, (gt[2] + gt[4]/2) * h],
-                'matched': False
-            } for gt in gts_raw]
+            current_gts_for_image = []
+            # Store GTs for the current image and update total GT counts in calculator
+            for gt_class_id, gt_cx, gt_cy, gt_w, gt_h in gts_raw:
+                current_gts_for_image.append({
+                    'cls': gt_class_id,
+                    'xyxy': [(gt_cx - gt_w/2) * w, (gt_cy - gt_h/2) * h,
+                             (gt_cx + gt_w/2) * w, (gt_cy + gt_h/2) * h],
+                    'matched': False # For matching within this image
+                })
+                metrics_calc.update_stats(class_id=gt_class_id, gt_delta=1)
+            
+            img_tp_count = 0
+            img_fp_count_details = {} # class_id -> count
+            
+            final_preds_with_status = [] # To store preds with their TP/FP status for this image
 
-            tp, fp = 0, 0
-            final_preds = []
+            # Match predictions to ground truths for the current image
+            for p_data in sorted(preds_from_detector, key=lambda x: x['conf'], reverse=True):
+                is_tp = False
+                pred_class_id = p_data['cls']
 
-            for p in sorted(preds, key=lambda x: x['conf'], reverse=True):
-                status = "Incorrect (FP)"
-                for i, gt in enumerate(gts):
-                    if not gt['matched'] and p['cls'] == gt['cls']:
-                        iou = calculate_iou(p['xyxy'], gt['xyxy'])
+                for gt_idx, gt_data in enumerate(current_gts_for_image):
+                    if not gt_data['matched'] and pred_class_id == gt_data['cls']:
+                        iou = calculate_iou(p_data['xyxy'], gt_data['xyxy'])
                         if iou > self.config.BOX_MATCHING_IOU_THRESHOLD:
-                            gt['matched'] = True
-                            tp += 1
-                            status = "Correct (TP)"
-                            break
-                final_preds.append({**p, 'status': status})
+                            current_gts_for_image[gt_idx]['matched'] = True
+                            is_tp = True
+                            break 
+                
+                if is_tp:
+                    metrics_calc.update_stats(class_id=pred_class_id, tp_delta=1)
+                    img_tp_count +=1
+                    status = "Correct (TP)"
+                else:
+                    metrics_calc.update_stats(class_id=pred_class_id, fp_delta=1)
+                    img_fp_count_details[pred_class_id] = img_fp_count_details.get(pred_class_id, 0) + 1
+                    status = "Incorrect (FP)"
+                
+                final_preds_with_status.append({**p_data, 'status': status})
 
-            fn = len([g for g in gts if not g['matched']])
-            fp = len(final_preds) - tp
+            # Calculate and update False Negatives for the current image
+            img_fn_details_for_drawing = [] # For drawing
+            for gt_data in current_gts_for_image:
+                if not gt_data['matched']:
+                    metrics_calc.update_stats(class_id=gt_data['cls'], fn_delta=1)
+                    img_fn_details_for_drawing.append(gt_data)
 
-            for p in final_preds:
-                # This now correctly uses the class map from the instance
-                class_name = class_names_map_eval.get(p['cls'], f"ID_{p['cls']}")
-                csv_rows.append([img_path.name, class_name, f"{p['conf']:.4f}", p['status']])
+            # For CSV logging
+            for p_info in final_preds_with_status:
+                class_name = class_names_map_eval.get(p_info['cls'], f"ID_{p_info['cls']}")
+                csv_rows.append([img_path.name, class_name, f"{p_info['conf']:.4f}", p_info['status']])
 
-            if fp > 0 or fn > 0:
+            # Draw error images if FPs or FNs occurred
+            num_img_fps = sum(img_fp_count_details.values())
+            if num_img_fps > 0 or len(img_fn_details_for_drawing) > 0:
                 error_count += 1
-                fp_preds = [p for p in final_preds if p['status'] == "Incorrect (FP)"]
-                fn_gts = [g for g in gts if not g['matched']]
-
+                fp_preds_to_draw = [p for p in final_preds_with_status if p['status'] == "Incorrect (FP)"]
+                
                 annotated_img = draw_error_annotations(
-                    img.copy(), fp_preds, fn_gts, class_names_map_eval,
-                    self.config.BOX_COLOR_MAP, self.config.DEFAULT_BOX_COLOR,
-                    self.logger
+                    img.copy(), fp_preds_to_draw, img_fn_details_for_drawing, 
+                    class_names_map_eval, self.config.BOX_COLOR_MAP, 
+                    self.config.DEFAULT_BOX_COLOR, self.logger
                 )
-
-                out_path = incorrect_dir / img_path.relative_to(self.config.INPUTS_DIR)
-                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path = incorrect_dir / img_path.name # Save directly in incorrect_dir
                 try:
                     cv2.imwrite(str(out_path), annotated_img)
-                    self.logger.info(f"Saved annotated error image to: {out_path}")
                 except Exception as e:
-                    self.logger.error(f"Failed to save annotated image: {e}")
+                    self.logger.error(f"Failed to save annotated error image {out_path}: {e}")
 
-        self.logger.info(f"Total error images: {error_count}")
+        self.logger.info(f"Total images with errors (FP or FN): {error_count}")
         if csv_rows:
             csv_path = eval_output_dir / self.config.PREDICTIONS_CSV_NAME
             try:
@@ -111,4 +136,42 @@ class YoloEvaluator:
             except Exception as e:
                 self.logger.error(f"Failed to write CSV: {e}")
 
-        self.logger.info(f"--- Evaluation Finished for Model: {model_path_to_eval} ---")
+        # --- MODIFIED: Use the metrics calculator ---
+        self.logger.info("--- Final Metrics (based on CoinDetector's output) ---")
+        final_metrics_results = metrics_calc.compute_metrics(
+            requested_metrics=self.config.REQUESTED_METRICS
+        )
+
+        # Log the computed metrics
+        for class_name, metrics in final_metrics_results.get('per_class', {}).items():
+            self.logger.info(f"Class: {class_name}")
+            log_line = f"  TP: {metrics.get('TP',0)}, FP: {metrics.get('FP',0)}, FN: {metrics.get('FN',0)} (GTs: {metrics.get('GT_count',0)})"
+            if 'precision' in metrics: log_line += f", Precision: {metrics['precision']:.4f}"
+            if 'recall' in metrics: log_line += f", Recall: {metrics['recall']:.4f}"
+            if 'f1_score' in metrics: log_line += f", F1-score: {metrics['f1_score']:.4f}"
+            self.logger.info(log_line)
+
+        overall_metrics = final_metrics_results.get('overall', {})
+        if overall_metrics:
+            self.logger.info("--- Overall Metrics ---")
+            log_line_overall = (
+                f"  Total TP: {overall_metrics.get('TP',0)}, "
+                f"Total FP: {overall_metrics.get('FP',0)}, "
+                f"Total FN: {overall_metrics.get('FN',0)} "
+                f"(Total GTs: {overall_metrics.get('GT_count',0)})"
+            )
+            if 'precision_micro' in overall_metrics: log_line_overall += f", Precision (Micro): {overall_metrics['precision_micro']:.4f}"
+            if 'recall_micro' in overall_metrics: log_line_overall += f", Recall (Micro): {overall_metrics['recall_micro']:.4f}"
+            if 'f1_score_micro' in overall_metrics: log_line_overall += f", F1-score (Micro): {overall_metrics['f1_score_micro']:.4f}"
+            self.logger.info(log_line_overall)
+
+        # Save metrics to the JSON file (using name from config)
+        metrics_file_path = eval_output_dir / self.config.METRICS_JSON_NAME
+        try:
+            with open(metrics_file_path, 'w') as f:
+                json.dump(final_metrics_results, f, indent=4)
+            self.logger.info(f"Saved final metrics to: {metrics_file_path}")
+        except Exception as e:
+            self.logger.error(f"Failed to save final metrics JSON: {e}")
+
+        self.logger.info(f"--- Detailed Evaluation Finished for Model: {model_path_to_eval} ---")

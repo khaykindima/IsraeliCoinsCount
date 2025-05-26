@@ -82,7 +82,6 @@ def finalize_and_exit(logger, main_log_file, run_dir, message, final_log_suffix)
 def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, logger):
     logger.info("--- Starting Training ---")
 
-    # --- FIXED: Used keyword arguments to prevent passing logger as seed ---
     train_pairs, val_pairs, test_pairs = split_data(
         image_label_pairs=pairs, 
         train_ratio=config.TRAIN_RATIO, 
@@ -132,50 +131,115 @@ def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, lo
 
 
     if best_model_path:
-        eval_dir = run_dir / "post_train_detailed_evaluation"
-        eval_dir.mkdir(parents=True, exist_ok=True)
+        eval_output_dir = run_dir / "custom_detailed_evaluation" # Save custom eval in its own subfolder
+        eval_output_dir.mkdir(parents=True, exist_ok=True)
         
 
         detector = create_detector_from_config(best_model_path, class_names_map, config, logger)
         evaluator = YoloEvaluator(detector, logger)
+        logger.info(f"--- Starting Custom Detailed Evaluation (Post-Training) ---")
         evaluator.perform_detailed_evaluation(
-            eval_output_dir=eval_dir,
+            eval_output_dir=eval_output_dir,
             all_image_label_pairs_eval=pairs
         )
 
     copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}_train_final.log", logger)
 
 def run_direct_evaluation_workflow(pairs, class_names_map, main_log_file, logger):
-    logger.info("--- Starting Direct Evaluation ---")
+    logger.info("--- Starting Direct Evaluation Workflow ---")
     model_path = config.MODEL_PATH_FOR_PREDICTION
 
     base_dir = config.OUTPUT_DIR / "direct_evaluation_runs"
     run_name_prefix = f"{model_path.stem}_direct_eval_run"
     run_dir = create_unique_run_dir(base_dir, run_name_prefix)
-    logger.info(f"Created unique run directory: {run_dir}")
+    logger.info(f"Direct evaluation run directory: {run_dir}")
     
     detector = create_detector_from_config(model_path, class_names_map, config, logger)
+    
+    # --- ADDED: Standard Ultralytics Evaluation (model.val()) ---
+    logger.info("--- Starting Standard Ultralytics Evaluation (model.val()) ---")
+    try:
+        # Create a temporary dataset.yaml for model.val()
+        # model.val() typically uses 'val' or 'test' split.
+        # For consistency with how perform_detailed_evaluation uses all pairs,
+        # we'll point the 'test' key in the temp YAML to all image directories.
+        temp_yaml_path = run_dir / "temp_dataset_for_ultralytics_val.yaml"
+        # _rel_dirs gets unique parent directories of images relative to INPUTS_DIR
+        image_dirs_for_yaml = _rel_dirs(pairs) 
+        
+        num_classes_for_yaml = len(class_names_map)
+        if not class_names_map and pairs: # Try to infer if map is empty but pairs exist
+             _, temp_label_dirs = zip(*pairs) if pairs else ([],[])
+             temp_unique_ids = get_unique_class_ids(list(set(Path(p).parent for p in temp_label_dirs)), logger)
+             if temp_unique_ids:
+                 num_classes_for_yaml = max(temp_unique_ids) + 1
+
+
+        create_yolo_dataset_yaml(
+            dataset_root_abs_path_str=str(config.INPUTS_DIR.resolve()), # Absolute path for 'path' key
+            train_rel_img_dir_paths=[], # No train split for this temp YAML
+            val_rel_img_dir_paths=[],   # No val split for this temp YAML
+            test_rel_img_dir_paths=image_dirs_for_yaml, # Use all image dirs for 'test'
+            class_names_map=class_names_map,
+            num_classes_val=num_classes_for_yaml,
+            output_yaml_path_obj=temp_yaml_path,
+            image_subdir_basename=config.IMAGE_SUBDIR_BASENAME, # Not strictly needed for val if paths are direct
+            label_subdir_basename=config.LABEL_SUBDIR_BASENAME, # Not strictly needed for val if paths are direct
+            logger_instance=logger
+        )
+
+        if temp_yaml_path.exists():
+            logger.info(f"Running detector.model.val() with data: {temp_yaml_path}")
+            # The results of model.val() will be saved by Ultralytics in a subfolder
+            # named 'standard_ultralytics_eval_results' within 'run_dir'
+            detector.model.val(
+                data=str(temp_yaml_path),
+                split='test', # Corresponds to the key we used in temp_yaml_path
+                project=str(run_dir), 
+                name="standard_ultralytics_eval_results",
+                iou=config.BOX_MATCHING_IOU_THRESHOLD # Use configured IoU for NMS in val
+            )
+            logger.info(f"Standard Ultralytics evaluation results saved in: {run_dir / 'standard_ultralytics_eval_results'}")
+        else:
+            logger.warning(f"Could not create temporary YAML for model.val() at {temp_yaml_path}. Skipping standard Ultralytics evaluation.")
+    except Exception as e:
+        logger.exception("An error occurred during standard Ultralytics evaluation (model.val()):")
+    # --- End of Standard Ultralytics Evaluation ---
+
+    # --- Custom Detailed Evaluation ---
+    logger.info(f"--- Starting Custom Detailed Evaluation ---")
+    custom_eval_output_dir = run_dir / "custom_detailed_evaluation" # Save custom eval in its own subfolder
+    custom_eval_output_dir.mkdir(parents=True, exist_ok=True)
+
     evaluator = YoloEvaluator(detector, logger)
     evaluator.perform_detailed_evaluation(
-        eval_output_dir=run_dir,
+        eval_output_dir=custom_eval_output_dir,
         all_image_label_pairs_eval=pairs
     )
 
     copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}_direct_eval_final.log", logger)
 
 def _rel_dirs(pairs):
-    return sorted({p.parent.relative_to(config.INPUTS_DIR) for p, _ in pairs})
+    """Gets unique parent directories of images, relative to config.INPUTS_DIR."""
+    if not pairs: return []
+    # Assuming pairs is list of (image_path_obj, label_path_obj)
+    # We need parent directory of image_path_obj
+    return sorted(list(set(p[0].parent.relative_to(config.INPUTS_DIR) for p in pairs)))
 
 def _find_best_model(model, run_dir, logger):
+    # run_dir here is the Ultralytics specific run directory (e.g., project/name)
     if hasattr(model, 'trainer') and hasattr(model.trainer, 'best') and Path(model.trainer.best).exists():
         path = Path(model.trainer.best).resolve()
         logger.info(f"Best model from trainer: {path}")
         return path
-    fallback = run_dir / "weights" / "best.pt"
-    if fallback.exists():
-        logger.info(f"Best model found at fallback path: {fallback}")
-        return fallback.resolve()
-    logger.warning("No best model found.")
+    # Fallback if trainer object doesn't have 'best' or it's not found
+    # Ultralytics saves weights typically in 'run_dir/weights/best.pt'
+    fallback_path = run_dir / "weights" / "best.pt"
+    if fallback_path.exists():
+        logger.info(f"Best model found at fallback path: {fallback_path}")
+        return fallback_path.resolve()
+        
+    logger.warning(f"No best model found in {run_dir}. Check training outputs.")
     return None
 
 if __name__ == '__main__':
