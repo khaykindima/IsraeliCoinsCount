@@ -9,7 +9,8 @@ from utils import (
     discover_and_pair_image_labels, split_data,
     get_unique_class_ids, load_class_names_from_yaml,
     create_yolo_dataset_yaml, validate_config_and_paths,
-    create_unique_run_dir, create_detector_from_config
+    create_unique_run_dir, create_detector_from_config,
+    plot_readable_confusion_matrix
 )
 from evaluate_model import YoloEvaluator
 
@@ -71,7 +72,7 @@ def load_or_derive_class_names(label_dirs, logger):
     if not unique_ids:
         return {}, 0
 
-    num_classes = max(unique_ids) + 1
+    num_classes = max(unique_ids) + 1 if unique_ids else 0
     return {i: f"class_{i}" for i in range(num_classes)}, num_classes
 
 def finalize_and_exit(logger, main_log_file, run_dir, message, final_log_suffix):
@@ -111,21 +112,18 @@ def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, lo
     training_dir = config.OUTPUT_DIR / "training_runs"
     training_dir.mkdir(parents=True, exist_ok=True)
 
-    run_name = f"{Path(config.MODEL_NAME_FOR_TRAINING).stem}_custom_training"
-    train_args = {
-        'data': str(dataset_yaml_path),
-        'epochs': config.EPOCHS,
-        'imgsz': config.IMG_SIZE,
-        'project': str(training_dir),
-        'name': run_name,
-        'optimizer': config.TRAINING_OPTIMIZER,
-        'lr0': config.TRAINING_LR0,
-        'lrf': config.TRAINING_LRF,
-        'exist_ok': False, # Set to False to prevent overwriting existing runs
-    }
-    train_args.update(config.AUGMENTATION_PARAMS)
-
-    results = model.train(**train_args)
+    results = model.train(
+        data=str(dataset_yaml_path), 
+		epochs=config.EPOCHS, 
+		imgsz=config.IMG_SIZE,
+        project=str(training_dir), 
+		name=f"{Path(config.MODEL_NAME_FOR_TRAINING).stem}_custom",
+        optimizer=config.TRAINING_OPTIMIZER, 
+		lr0=config.TRAINING_LR0, 
+		lrf=config.TRAINING_LRF,
+        exist_ok=False, 
+		**config.AUGMENTATION_PARAMS)
+        
     run_dir = Path(results.save_dir)
     best_model_path = _find_best_model(model, run_dir, logger)
 
@@ -158,6 +156,7 @@ def run_direct_evaluation_workflow(pairs, class_names_map, main_log_file, logger
     
     # --- ADDED: Standard Ultralytics Evaluation (model.val()) ---
     logger.info("--- Starting Standard Ultralytics Evaluation (model.val()) ---")
+    standard_eval_dir = run_dir / "standard_ultralytics_eval_results"
     try:
         # Create a temporary dataset.yaml for model.val()
         # model.val() typically uses 'val' or 'test' split.
@@ -189,19 +188,22 @@ def run_direct_evaluation_workflow(pairs, class_names_map, main_log_file, logger
         )
 
         if temp_yaml_path.exists():
-            logger.info(f"Running detector.model.val() with data: {temp_yaml_path}")
-            # The results of model.val() will be saved by Ultralytics in a subfolder
-            # named 'standard_ultralytics_eval_results' within 'run_dir'
-            detector.model.val(
-                data=str(temp_yaml_path),
-                split='test', # Corresponds to the key we used in temp_yaml_path
-                project=str(run_dir), 
-                name="standard_ultralytics_eval_results",
-                iou=config.BOX_MATCHING_IOU_THRESHOLD # Use configured IoU for NMS in val
-            )
-            logger.info(f"Standard Ultralytics evaluation results saved in: {run_dir / 'standard_ultralytics_eval_results'}")
-        else:
-            logger.warning(f"Could not create temporary YAML for model.val() at {temp_yaml_path}. Skipping standard Ultralytics evaluation.")
+            metrics = detector.model.val(
+                data=str(temp_yaml_path), 
+				split='test', 
+				project=str(run_dir), 
+                name=standard_eval_dir.name, 
+				iou=config.BOX_MATCHING_IOU_THRESHOLD)
+				
+            logger.info(f"Standard Ultralytics evaluation results saved in: {standard_eval_dir}")
+
+            if hasattr(metrics, 'confusion_matrix'):
+                cm_data = metrics.confusion_matrix.matrix
+                class_names = [class_names_map[i] for i in sorted(class_names_map.keys())]
+                readable_cm_path = standard_eval_dir / 'confusion_matrix_readable.png'
+                plot_readable_confusion_matrix(
+                    cm_data, class_names, readable_cm_path, 'Standard Evaluation Confusion Matrix')
+
     except Exception as e:
         logger.exception("An error occurred during standard Ultralytics evaluation (model.val()):")
     # --- End of Standard Ultralytics Evaluation ---

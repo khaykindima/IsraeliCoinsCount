@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import cv2 # Import for font selection
 
 # --- Base Paths ---
 # Allow overriding the input directory via an environment variable for portability.
@@ -103,5 +104,12 @@ BOX_COLOR_MAP = {
     "ten": (255, 255, 0),     # Cyan/Teal
 }
 DEFAULT_BOX_COLOR = (255, 0, 0) # Blue for any other classes not in map
-
-
+# ADDED: Configurable thickness and font settings
+BOX_THICKNESS = 2
+TEXT_THICKNESS = 3
+FONT_FACE = cv2.FONT_HERSHEY_SIMPLEX
+# Font scale for regular predictions (run_inference.py)
+INFERENCE_FONT_SCALE = 1.2
+# Font scales for error analysis images (evaluate_model.py)
+ERROR_FP_FONT_SCALE = 1.5 # False Positives
+ERROR_FN_FONT_SCALE = 1.4 # False Negatives (missed GT)

@@ -102,10 +102,34 @@ class InferenceRunner:
         
         self.logger.info("--- Inference Run Finished ---")
 
+def setup_inference():
+    """Handles all initial setup for the inference script."""
+    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    log_file = config.OUTPUT_DIR / f"{config.LOG_FILE_BASE_NAME}_inference.log"
+    logger = setup_logging(log_file, logger_name='yolo_inference_logger')
+
+    if not validate_config_and_paths(config, 'inference', logger):
+        return None, None
+
+    class_names_yaml_path = config.INPUTS_DIR / config.ORIGINAL_DATA_YAML_NAME
+    names_from_yaml = load_class_names_from_yaml(class_names_yaml_path, logger)
+    if names_from_yaml is None:
+        logger.error(f"CRITICAL: Could not load class names from '{class_names_yaml_path}'.")
+        return None, None
+    class_names_map = {i: str(name).strip() for i, name in enumerate(names_from_yaml)}
+
+    try:
+        detector = create_detector_from_config(
+            config.MODEL_PATH_FOR_PREDICTION, class_names_map, config, logger
+        )
+        return logger, detector
+    except Exception as e:
+        logger.exception(f"A critical error occurred during detector setup: {e}")
+        return logger, None
 
 def main():
     """
-    Main function to set up and run the inference process from the command line.
+    Main function to set up and run the inference process.
     """
     parser = argparse.ArgumentParser(description="Run inference with a trained YOLO model.")
     parser.add_argument(
@@ -117,31 +141,17 @@ def main():
     )
     args = parser.parse_args()
 
-    # --- Setup ---
-    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    log_file = config.OUTPUT_DIR / f"{config.LOG_FILE_BASE_NAME}_inference.log"
-    logger = setup_logging(log_file, logger_name='yolo_inference_logger')
+    logger, detector = setup_inference()
 
-    if not validate_config_and_paths(config, 'inference', logger):
+    if not detector:
+        if logger:
+            logger.error("Exiting due to setup failure.")
+        else:
+            print("Exiting due to critical setup failure before logger was initialized.")
         return
-
-    # --- Load Class Names ---
-    class_names_yaml_path = config.INPUTS_DIR / config.ORIGINAL_DATA_YAML_NAME
-    names_from_yaml = load_class_names_from_yaml(class_names_yaml_path, logger)
-    if names_from_yaml is None:
-        logger.error(f"CRITICAL: Could not load class names from '{class_names_yaml_path}'. Exiting.")
-        return
-    class_names_map = {i: str(name).strip() for i, name in enumerate(names_from_yaml)}
-
-    # --- Create Detector and Runner Instances ---
-    try:
-        detector = create_detector_from_config(
-            config.MODEL_PATH_FOR_PREDICTION, class_names_map, config, logger
-        )
-        runner = InferenceRunner(detector, logger)
-        runner.run(args.input_path)
-    except Exception as e:
-        logger.exception(f"A critical error occurred during setup or execution: {e}")
+        
+    runner = InferenceRunner(detector, logger)
+    runner.run(args.input_path)
 
 if __name__ == '__main__':
     main()
