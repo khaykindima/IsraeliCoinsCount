@@ -89,9 +89,8 @@ class YoloEvaluator:
             all_detection_correctness_data, error_count_before, error_count_after
         )
 
-
         overall = final_metrics.get('overall', {})
-        self.logger.info(f"--- Overall (Micro) | P: {overall.get('precision_micro',0):.4f}, R: {overall.get('recall_micro',0):.4f}, F1: {overall.get('f1_score_micro',0):.4f} ---")
+        self.logger.info(f"--- Overall (Micro) | Precision: {overall.get('precision_micro',0):.4f}, Recall: {overall.get('recall_micro',0):.4f}, F1-score: {overall.get('f1_score_micro',0):.4f} ---")
         metrics_file_path = eval_output_dir / "final_evaluation_metrics.json"
         with open(metrics_file_path, 'w') as f:
             json.dump(final_metrics, f, indent=4)
@@ -108,60 +107,71 @@ class YoloEvaluator:
         for class_id in sorted(class_names_map.keys()):
             class_name = class_names_map[class_id]
             b = stats_before.get(class_name, {})
-            a = stats_after.get(class_name, {}) # This now contains P, R, F1
+            a = stats_after.get(class_name, {})
+            
+            after_log_str = (
+                f"TP: {a.get('TP', 0)}, FP: {a.get('FP', 0)}, FN: {a.get('FN', 0)} (GTs: {a.get('GT_count',0)}), "
+                f"Precision: {a.get('precision', 0):.4f}, Recall: {a.get('recall', 0):.4f}, F1-score: {a.get('f1_score', 0):.4f}"
+            )
             
             self.logger.info(f"Class: {class_name}")
-            self.logger.info(f"  - Before: TP={b.get('TP',0):<4} FP={b.get('FP',0):<4} FN={b.get('FN',0):<4}")
-            self.logger.info(
-                f"  - After:  TP={a.get('TP',0):<4} FP={a.get('FP',0):<4} FN={a.get('FN',0):<4} | "
-                f"P: {a.get('precision', 0):.4f}, R: {a.get('recall', 0):.4f}, F1: {a.get('f1_score', 0):.4f}"
-            )
+            self.logger.info(f"  - Before: TP: {b.get('TP',0)}, FP: {b.get('FP',0)}, FN: {b.get('FN',0)}")
+            self.logger.info(f"  - After:  {after_log_str}")
         self.logger.info("-" * 70)
 
     def _generate_consolidated_excel_report(self, eval_output_dir, class_names_map, stats_before, stats_after, detection_correctness_data, error_count_before, error_count_after):
-        """Generates a single Excel file."""
+        """
+        Generates a single Excel file with a restructured summary and a detailed detection list.
+        """
         excel_path = eval_output_dir / "evaluation_summary.xlsx"
-        
         try:
             with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
                 # Sheet 1: Class Metrics Summary
                 summary_data = []
+                
+                # Process per-class rows using the helper
                 for class_id in sorted(class_names_map.keys()):
                     class_name = class_names_map[class_id]
-                    b_stats, a_stats = stats_before.get(class_name, {}), stats_after.get(class_name, {})
-                    b_prf1, a_prf1 = calculate_prf1(b_stats.get('TP',0), b_stats.get('FP',0), b_stats.get('FN',0)), calculate_prf1(a_stats.get('TP',0), a_stats.get('FP',0), a_stats.get('FN',0))
-                    summary_data.append({
-                        'Class': class_name,
-                        ('Before', 'TP'): b_stats.get('TP', 0),
-                        ('Before', 'FP'): b_stats.get('FP', 0),
-                        ('Before', 'FN'): b_stats.get('FN', 0),
-                        ('Before', 'Precision'): b_prf1['precision'],
-                        ('Before', 'Recall'): b_prf1['recall'],
-                        ('Before', 'F1-Score'): b_prf1['f1_score'],
-                        ('After', 'TP'): a_stats.get('TP', 0),
-                        ('After', 'FP'): a_stats.get('FP', 0),
-                        ('After', 'FN'): a_stats.get('FN', 0),
-                        ('After', 'Precision'): a_prf1['precision'],
-                        ('After', 'Recall'): a_prf1['recall'],
-                        ('After', 'F1-Score'): a_prf1['f1_score'],
-                    })
+                    row_data = {('Class', ''): class_name}
+                    row_data.update(self._prepare_metrics_row(stats_before.get(class_name, {}), 'Before'))
+                    row_data.update(self._prepare_metrics_row(stats_after.get(class_name, {}), 'After'))
+                    summary_data.append(row_data)
+
+                # Process Overall row using the helper
+                total_stats_b = {metric: sum(s.get(metric, 0) for s in stats_before.values()) for metric in ['TP', 'FP', 'FN']}
+                total_stats_a = {metric: sum(s.get(metric, 0) for s in stats_after.values()) for metric in ['TP', 'FP', 'FN']}
+
+                overall_row_data = {('Class', ''): 'Overall (Micro)'}
+                overall_row_data.update(self._prepare_metrics_row(total_stats_b, 'Before', error_count=error_count_before))
+                overall_row_data.update(self._prepare_metrics_row(total_stats_a, 'After', error_count=error_count_after))
+                summary_data.append(overall_row_data)
                 
-                b_tp_total, b_fp_total, b_fn_total = sum(s['TP'] for s in stats_before.values()), sum(s['FP'] for s in stats_before.values()), sum(s['FN'] for s in stats_before.values())
-                a_tp_total, a_fp_total, a_fn_total = sum(s['TP'] for s in stats_after.values()), sum(s['FP'] for s in stats_after.values()), sum(s['FN'] for s in stats_after.values())
-                b_prf1_total, a_prf1_total = calculate_prf1(b_tp_total, b_fp_total, b_fn_total), calculate_prf1(a_tp_total, a_fp_total, a_fn_total)
+                df_metrics = pd.DataFrame(summary_data)
+                df_metrics.columns = pd.MultiIndex.from_tuples(df_metrics.columns)
+                df_metrics = df_metrics.set_index(('Class', ''))
+                df_metrics.index.name = 'Class'
+
+                # --- FIX: Define and apply the correct column order ---
+                # Define the desired order of sub-columns for "Before" and "After"
+                metric_order = ['TP', 'FP', 'FN', 'Precision', 'Recall', 'F1-Score', 'Images with Errors']
                 
-                summary_data.append({
-                    'Class': 'Overall (Micro)',
-                    ('Before', 'TP'): b_tp_total, ('Before', 'FP'): b_fp_total, ('Before', 'FN'): b_fn_total,
-                    ('Before', 'Precision'): b_prf1_total['precision'], ('Before', 'Recall'): b_prf1_total['recall'], ('Before', 'F1-Score'): b_prf1_total['f1_score'],
-                    ('Before', 'Images with Errors'): error_count_before, # Merged Info
-                    ('After', 'TP'): a_tp_total, ('After', 'FP'): a_fp_total, ('After', 'FN'): a_fn_total,
-                    ('After', 'Precision'): a_prf1_total['precision'], ('After', 'Recall'): a_prf1_total['recall'], ('After', 'F1-Score'): a_prf1_total['f1_score'],
-                    ('After', 'Images with Errors'): error_count_after, # Merged Info
-                })
+                # Get the top-level columns ('Before', 'After') in their original order
+                prefixes = []
+                if ('Before', 'TP') in df_metrics.columns: prefixes.append('Before')
+                if ('After', 'TP') in df_metrics.columns: prefixes.append('After')
+
+                # Build the final, ordered list of MultiIndex columns
+                final_column_order = []
+                for prefix in prefixes:
+                    for metric in metric_order:
+                        # Add the column to our final list only if it exists in the DataFrame
+                        if (prefix, metric) in df_metrics.columns:
+                            final_column_order.append((prefix, metric))
                 
-                df_metrics = pd.DataFrame(summary_data).set_index('Class')
-                df_metrics.columns = pd.MultiIndex.from_tuples(df_metrics.columns) # Create the multi-level header
+                # Reorder the DataFrame columns to match our desired order
+                df_metrics = df_metrics[final_column_order]
+                # --- End of fix ---
+
                 df_metrics.to_excel(writer, sheet_name='Class Metrics Summary')
 
                 # Sheet 2: Detailed Detections
@@ -170,6 +180,21 @@ class YoloEvaluator:
                     df_detections = df_detections[['image_name', 'class_name', 'probability', 'box_correctness']].sort_values(by=['image_name', 'box_correctness', 'probability'], ascending=[True, True, False])
                     df_detections.to_excel(writer, sheet_name='Detailed Detections', index=False)
 
-            self.logger.info(f"Successfully generated consolidated Excel report with 2 sheets: {excel_path}")
         except Exception as e:
             self.logger.error(f"Failed to generate consolidated Excel report: {e}. Ensure 'openpyxl' is installed (`pip install openpyxl`).")
+
+    def _prepare_metrics_row(self, stats, prefix, error_count=None):
+        tp, fp, fn = stats.get('TP', 0), stats.get('FP', 0), stats.get('FN', 0)
+        prf1 = calculate_prf1(tp, fp, fn)
+        row_data = {
+            (prefix, 'TP'): tp,
+            (prefix, 'FP'): fp,
+            (prefix, 'FN'): fn,
+            (prefix, 'Precision'): prf1['precision'],
+            (prefix, 'Recall'): prf1['recall'],
+            (prefix, 'F1-Score'): prf1['f1_score'],
+        }
+        if error_count is not None:
+            row_data[(prefix, 'Images with Errors')] = error_count
+            
+        return row_data

@@ -59,11 +59,10 @@ class DetectionMetricsCalculator:
         self.ultralytics_cm.process_batch(preds_tensor, gt_bboxes_tensor, gt_cls_tensor)
 
 
-    def compute_metrics(self, requested_metrics=None, eval_output_dir: Path = None):
+    def compute_metrics(self, eval_output_dir: Path = None):
         """
-        Computes metrics by deriving stats from the confusion matrix and handles plotting.
+        Computes all metrics by deriving stats from the confusion matrix and handles plotting.
         Args:
-            requested_metrics (list of str, optional): Metrics to compute.
             eval_output_dir (Path, optional): Directory to save plots.
         """
         results = {'per_class': {}, 'overall': {}, 'confusion_matrix_data': None, 'confusion_matrix_plot_path_info': None}
@@ -72,21 +71,9 @@ class DetectionMetricsCalculator:
         if matrix is None:
             self.logger.error("Cannot compute metrics: Confusion Matrix has not been populated.")
             return results
-
-        # Determine which metrics to compute
-        base_metrics_to_calculate = ['precision', 'recall', 'f1_score']
-        should_process_confusion_matrix = False
-        if requested_metrics is None or not requested_metrics:
-            metrics_to_calculate = base_metrics_to_calculate
-            should_process_confusion_matrix = True
-        else:
-            processed_requested = [m.lower() for m in requested_metrics]
-            metrics_to_calculate = [m for m in processed_requested if m in base_metrics_to_calculate]
-            if 'confusion_matrix' in processed_requested:
-                should_process_confusion_matrix = True
-
-        self.logger.info(f"Computing base metrics: {metrics_to_calculate}")
-        if should_process_confusion_matrix: self.logger.info("Confusion matrix processing also requested.")
+        
+        metrics_to_calculate = ['precision', 'recall', 'f1_score']
+        self.logger.info(f"Computing base metrics: {metrics_to_calculate} and confusion matrix.")
 
         total_tp, total_fp, total_fn, total_gt = 0, 0, 0, 0
 
@@ -115,23 +102,22 @@ class DetectionMetricsCalculator:
             if name in overall_metrics:
                  results['overall'][f"{name}_micro"] = overall_metrics[name]
 
-        if should_process_confusion_matrix:
-            self.logger.info(f"Raw Confusion Matrix data:\n{matrix}")
-            results['confusion_matrix_data'] = matrix.tolist()
+        self.logger.info(f"Raw Confusion Matrix data:\n{matrix}")
+        results['confusion_matrix_data'] = matrix.tolist()
+        
+        if eval_output_dir and self.config and hasattr(self.config, 'CONFUSION_MATRIX_PLOT_NAME'):
+            plot_path = eval_output_dir / self.config.CONFUSION_MATRIX_PLOT_NAME
+            sorted_class_names = [self.class_names_map[i] for i in sorted(self.class_names_map.keys())]
             
-            if eval_output_dir and self.config and hasattr(self.config, 'CONFUSION_MATRIX_PLOT_NAME'):
-                plot_path = eval_output_dir / self.config.CONFUSION_MATRIX_PLOT_NAME
-                sorted_class_names = [self.class_names_map[i] for i in sorted(self.class_names_map.keys())]
-                
-                plot_readable_confusion_matrix(
-                    matrix_data=matrix,
-                    class_names=sorted_class_names,
-                    output_path=plot_path,
-                    title='Custom Evaluation Confusion Matrix'
-                )
-                results['confusion_matrix_plot_path_info'] = f"Plot saved to {plot_path}"
-            else:
-                results['confusion_matrix_plot_path_info'] = "Plot not saved due to missing output path or filename config."
+            plot_readable_confusion_matrix(
+                matrix_data=matrix,
+                class_names=sorted_class_names,
+                output_path=plot_path,
+                title='Custom Evaluation Confusion Matrix'
+            )
+            results['confusion_matrix_plot_path_info'] = f"Plot saved to {plot_path}"
+        else:
+            results['confusion_matrix_plot_path_info'] = "Plot not saved due to missing output path or filename config."
         
         self.logger.info("Metrics computation complete.")
         return results

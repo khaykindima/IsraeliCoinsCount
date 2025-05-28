@@ -47,7 +47,7 @@ MODEL_NAME_FOR_TRAINING = "yolov8n_best.pt" # You can change this to other YOLOv
 MODEL_PATH_FOR_PREDICTION = Path("yolov8n_best.pt") # Placeholder - update this to your actual best model path
 
 # --- Training Parameters ---
-EPOCHS = 0 # Set to >0 for training, 0 for prediction/evaluation only using MODEL_PATH_FOR_PREDICTION
+EPOCHS = 5 # Set to >0 for training, 0 for prediction/evaluation only using MODEL_PATH_FOR_PREDICTION
 IMG_SIZE = 640
 TRAINING_OPTIMIZER = 'Adam' # Default is 'SGD', or 'AdamW'
 TRAINING_LR0 = 0.0001 # Initial learning rate
@@ -88,12 +88,6 @@ PER_CLASS_CONF_THRESHOLDS = {
     "five": 0.35,
     "ten": 0.8,
 }
-
-# --- Metrics Calculation ---
-# Specify which metrics to calculate and report. 
-# Options: 'precision', 'recall', 'f1_score', 'confusion_matrix'.
-# If empty or None, all available core metrics (P, R, F1, CM) will be calculated.
-REQUESTED_METRICS = ['precision', 'recall', 'f1_score', 'confusion_matrix'] 
 
 # --- Drawing Configuration ---
 # Colors are in BGR format
