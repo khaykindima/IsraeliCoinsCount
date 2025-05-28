@@ -1,3 +1,5 @@
+import numpy as np
+
 def calculate_iou(box1_xyxy, box2_xyxy):
     """Calculates IoU of two bounding boxes [x1, y1, x2, y2]."""
     x1_i, y1_i = max(box1_xyxy[0], box2_xyxy[0]), max(box1_xyxy[1], box2_xyxy[1])
@@ -9,3 +11,74 @@ def calculate_iou(box1_xyxy, box2_xyxy):
     box2_area = (box2_xyxy[2] - box2_xyxy[0]) * (box2_xyxy[3] - box2_xyxy[1])
     union_area = box1_area + box2_area - intersection_area
     return intersection_area / union_area if union_area > 0 else 0.0
+
+
+def match_predictions(predictions, ground_truths, iou_threshold, class_names_map):
+    """
+    Matches predictions to ground truths to determine TP, FP, and FN.
+
+    This function provides a clear, step-by-step implementation of the matching logic,
+    serving as the single point of truth for detailed analysis (e.g., before/after summaries).
+
+    Args:
+        predictions (list): A list of prediction dictionaries.
+        ground_truths (list): A list of ground truth dictionaries.
+        iou_threshold (float): The IoU threshold for a match to be considered valid.
+        class_names_map (dict): A map from class ID to class name.
+
+    Returns:
+        tuple: A tuple containing:
+            - dict: Per-class stats {'TP': count, 'FP': count, 'FN': count}.
+            - list: Detailed list of True Positive predictions.
+            - list: Detailed list of False Positive predictions.
+            - list: Detailed list of False Negative ground truths.
+    """
+    stats = {name: {'TP': 0, 'FP': 0, 'FN': 0} for name in class_names_map.values()}
+    tp_details = []
+    fp_details = []
+    fn_details = []
+
+    # A copy of ground truths with a flag to track matching
+    gt_matched_flags = [False] * len(ground_truths)
+
+    # Sort predictions by confidence score in descending order
+    sorted_preds = sorted(predictions, key=lambda x: x['conf'], reverse=True)
+
+    # --- Step 1: Identify True Positives and False Positives ---
+    for pred in sorted_preds:
+        pred_class_id = pred['cls']
+        class_name = class_names_map.get(pred_class_id, f"ID_{pred_class_id}")
+        pred['class_name'] = class_name # Add class name to all preds for convenience
+
+        best_match_gt_idx = -1
+        max_iou = -1
+
+        # Find the best possible GT match for the current prediction
+        for i, gt in enumerate(ground_truths):
+            # Only consider GTs of the same class that haven't been matched yet
+            if gt['cls'] == pred_class_id and not gt_matched_flags[i]:
+                iou = calculate_iou(pred['xyxy'], gt['xyxy'])
+                if iou > max_iou:
+                    max_iou = iou
+                    best_match_gt_idx = i
+        
+        # If a good enough match is found, it's a True Positive
+        if max_iou >= iou_threshold:
+            stats[class_name]['TP'] += 1
+            gt_matched_flags[best_match_gt_idx] = True  # Mark this GT as used
+            tp_details.append(pred)
+        else:
+            stats[class_name]['FP'] += 1
+            fp_details.append(pred)
+
+    # --- Step 2: Identify False Negatives ---
+    # Any ground truth that was not matched by any prediction is a False Negative.
+    for i, is_matched in enumerate(gt_matched_flags):
+        if not is_matched:
+            gt = ground_truths[i]
+            class_name = class_names_map.get(gt['cls'])
+            gt['class_name'] = class_name
+            stats[class_name]['FN'] += 1
+            fn_details.append(gt)
+
+    return stats, tp_details, fp_details, fn_details

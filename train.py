@@ -172,60 +172,10 @@ def run_direct_evaluation_workflow(pairs, class_names_map, main_log_file, logger
     logger.info(f"Direct evaluation run directory: {run_dir}")
     
     detector = create_detector_from_config(model_path, class_names_map, config, logger)
-    
-    # --- ADDED: Standard Ultralytics Evaluation (model.val()) ---
-    logger.info("--- Starting Standard Ultralytics Evaluation (model.val()) ---")
-    standard_eval_dir = run_dir / "standard_ultralytics_eval_results"
-    try:
-        temp_yaml_path = run_dir / "temp_dataset_for_ultralytics_val.yaml"
-        
-        image_dirs_for_yaml = _get_relative_path_for_yolo_yaml(pairs, config.INPUTS_DIR)
-        
-        num_classes_for_yaml = len(class_names_map)
-        if not class_names_map and pairs: # Try to infer if map is empty but pairs exist
-             _, temp_label_dirs = zip(*pairs) if pairs else ([],[])
-             temp_unique_ids = get_unique_class_ids(list(set(Path(p).parent for p in temp_label_dirs)), logger)
-             if temp_unique_ids:
-                 num_classes_for_yaml = max(temp_unique_ids) + 1
-
-
-        create_yolo_dataset_yaml(
-            dataset_root_abs_path_str=str(config.INPUTS_DIR.resolve()), # Absolute path for 'path' key
-            train_rel_img_dir_paths=[], # No train split for this temp YAML
-            val_rel_img_dir_paths=[],   # No val split for this temp YAML
-            test_rel_img_dir_paths=image_dirs_for_yaml, # Use all image dirs for 'test'
-            class_names_map=class_names_map,
-            num_classes_val=num_classes_for_yaml,
-            output_yaml_path_obj=temp_yaml_path,
-            image_subdir_basename=config.IMAGE_SUBDIR_BASENAME, # Not strictly needed for val if paths are direct
-            label_subdir_basename=config.LABEL_SUBDIR_BASENAME, # Not strictly needed for val if paths are direct
-            logger_instance=logger
-        )
-
-        if temp_yaml_path.exists():
-            metrics = detector.model.val(
-                data=str(temp_yaml_path), 
-				split='test', 
-				project=str(run_dir), 
-                name=standard_eval_dir.name, 
-				iou=config.BOX_MATCHING_IOU_THRESHOLD)
-				
-            logger.info(f"Standard Ultralytics evaluation results saved in: {standard_eval_dir}")
-
-            if hasattr(metrics, 'confusion_matrix'):
-                cm_data = metrics.confusion_matrix.matrix
-                class_names = [class_names_map[i] for i in sorted(class_names_map.keys())]
-                readable_cm_path = standard_eval_dir / 'confusion_matrix_readable.png'
-                plot_readable_confusion_matrix(
-                    cm_data, class_names, readable_cm_path, 'Standard Evaluation Confusion Matrix')
-
-    except Exception as e:
-        logger.exception("An error occurred during standard Ultralytics evaluation (model.val()):")
-    # --- End of Standard Ultralytics Evaluation ---
 
     # --- Custom Detailed Evaluation ---
     logger.info(f"--- Starting Custom Detailed Evaluation ---")
-    custom_eval_output_dir = run_dir / "custom_detailed_evaluation" # Save custom eval in its own subfolder
+    custom_eval_output_dir = run_dir / "custom_detailed_evaluation" 
     custom_eval_output_dir.mkdir(parents=True, exist_ok=True)
 
     evaluator = YoloEvaluator(detector, logger)
@@ -235,6 +185,7 @@ def run_direct_evaluation_workflow(pairs, class_names_map, main_log_file, logger
     )
 
     copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}_direct_eval_final.log", logger)
+
 
 def _find_best_model(model, run_dir, logger):
     # run_dir here is the Ultralytics specific run directory (e.g., project/name)
