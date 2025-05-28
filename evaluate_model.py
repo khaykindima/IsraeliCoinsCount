@@ -79,14 +79,6 @@ class YoloEvaluator:
                 if not gts_processed[best_match_gt_idx]['matched_to_pred']:
                     gts_processed[best_match_gt_idx]['matched_to_pred'] = True
                     is_tp = True
-
-            # for gt in gts_processed:
-            #     if not gt['matched_to_pred'] and pred_class_id == gt['cls']:
-            #         iou = calculate_iou(pred['xyxy'], gt['xyxy'])
-            #         if iou > self.config.BOX_MATCHING_IOU_THRESHOLD:
-            #             gt['matched_to_pred'] = True
-            #             is_tp = True
-            #             break
             
             if is_tp:
                 stats[pred_class_name]['TP'] += 1

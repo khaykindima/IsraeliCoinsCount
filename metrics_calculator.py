@@ -95,8 +95,8 @@ class DetectionMetricsCalculator:
             class_name = self.class_names_map.get(i, f"Unknown_ID_{i}")
             
             tp = matrix[i, i]
-            fp = matrix[:, i].sum() - tp
-            fn = matrix[i, :].sum() - tp
+            fp = matrix[i, :].sum() - tp
+            fn = matrix[:, i].sum() - tp
             gt = tp + fn
 
             # Use the centralized utility function
