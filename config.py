@@ -44,7 +44,7 @@ MODEL_NAME_FOR_TRAINING = "yolov8n_best.pt" # You can change this to other YOLOv
 # MODEL_PATH_FOR_PREDICTION should be the path to your trained model (e.g., best.pt from a training run)
 # This will be used by evaluate_model.py and run_inference.py
 # Example: MODEL_PATH_FOR_PREDICTION = OUTPUT_DIR / "training_runs" / "yolov8n_custom_training" / "weights" / "best.pt"
-MODEL_PATH_FOR_PREDICTION = Path("yolov8n_best.pt") # Placeholder - update this to your actual best model path
+MODEL_PATH_FOR_PREDICTION = "yolov8n_best.pt" # Placeholder - update this to your actual best model path
 
 # --- Training Parameters ---
 EPOCHS = 5 # Set to >0 for training, 0 for prediction/evaluation only using MODEL_PATH_FOR_PREDICTION

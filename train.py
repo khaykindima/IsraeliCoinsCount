@@ -164,7 +164,7 @@ def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, lo
 
 def run_direct_evaluation_workflow(pairs, class_names_map, main_log_file, logger):
     logger.info("--- Starting Direct Evaluation Workflow ---")
-    model_path = config.MODEL_PATH_FOR_PREDICTION
+    model_path = Path(config.MODEL_PATH_FOR_PREDICTION)
 
     base_dir = config.OUTPUT_DIR / "direct_evaluation_runs"
     run_name_prefix = f"{model_path.stem}_direct_eval_run"

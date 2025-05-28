@@ -14,10 +14,22 @@ from detector import CoinDetector
 
 # Factory function for creating a detector 
 def create_detector_from_config(model_path, class_map, config_module, logger):
-    """Creates a fully configured CoinDetector instance from config."""
-    logger.info(f"Creating detector instance with model: {model_path}")
+    """
+    Creates a fully configured CoinDetector instance from config.
+    Args:
+        model_path (str or Path): Path to the model file. Will be converted to Path if str.
+        class_map (dict): Mapping of class IDs to class names.
+        config_module (module): The configuration module.
+        logger (logging.Logger): Logger instance.
+    Returns:
+        CoinDetector: Configured instance of the detector.
+    """
+    # Ensure model_path is a Path object before passing to CoinDetector
+    model_path_obj = Path(model_path)
+    logger.info(f"Creating detector instance with model: {model_path_obj}")
+    
     detector = CoinDetector(
-        model_path=model_path,
+        model_path=model_path_obj, # Pass the Path object
         class_names_map=class_map,
         per_class_conf_thresholds=config_module.PER_CLASS_CONF_THRESHOLDS,
         default_conf_thresh=config_module.DEFAULT_CONF_THRESHOLD,
@@ -91,8 +103,10 @@ def validate_config_and_paths(config_module, mode, logger):
 
     # Validate paths/settings specific to the run mode
     if mode in ['evaluate', 'inference', 'train_direct_eval']:
-        if not config_module.MODEL_PATH_FOR_PREDICTION.exists():
-            logger.error(f"Config Error: MODEL_PATH_FOR_PREDICTION does not exist at '{config_module.MODEL_PATH_FOR_PREDICTION}'.")
+        model_path_str = config_module.MODEL_PATH_FOR_PREDICTION
+        model_path_obj = Path(model_path_str) # Convert to Path for validation
+        if not model_path_obj.exists():
+            logger.error(f"Config Error: MODEL_PATH_FOR_PREDICTION does not exist at '{model_path_str}'.")
             is_valid = False
 
     if mode == 'train' and config_module.EPOCHS <= 0:
