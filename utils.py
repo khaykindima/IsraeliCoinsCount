@@ -250,7 +250,7 @@ def draw_error_annotations(image_np, fp_predictions_to_draw, fn_gt_to_draw, clas
         for gt_data in fn_gt_to_draw:
             x1, y1, x2, y2 = map(int, gt_data['xyxy'])
             class_name = class_names_map.get(gt_data['cls'], f"ID_{gt_data['cls']}")
-            label = f"FN: {class_name}"
+            label = f"GT: {class_name}"
             color = box_color_map.get(class_name.lower().strip(), default_box_color)
 
             cv2.rectangle(image_np, (x1, y1), (x2, y2), color, config_module.BOX_THICKNESS)
@@ -259,3 +259,25 @@ def draw_error_annotations(image_np, fp_predictions_to_draw, fn_gt_to_draw, clas
             cv2.putText(image_np, label, (x1, y2 + text_h + 5), font, config_module.ERROR_FN_FONT_SCALE, (0,0,0), config_module.TEXT_THICKNESS)
 
     return image_np
+
+def calculate_prf1(tp, fp, fn):
+    """
+    Calculates precision, recall, and F1-score from TP, FP, and FN counts.
+    This is a centralized utility function to avoid code duplication.
+    """
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+    return {'precision': precision, 'recall': recall, 'f1_score': f1_score}
+
+def _get_relative_path_for_yolo_yaml(pairs, inputs_dir):
+    """
+    Gets unique parent directories of images from pairs, relative to a base directory.
+    This is a helper for creating dataset.yaml files.
+    """
+    if not pairs:
+        return []
+    # Using a set to handle duplicates automatically
+    # The path is converted to a string for use in the YAML file
+    relative_dirs = {str(p[0].parent.relative_to(inputs_dir)) for p in pairs}
+    return sorted(list(relative_dirs))

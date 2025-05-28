@@ -2,7 +2,7 @@ import logging
 import torch
 from pathlib import Path
 from ultralytics.utils import metrics as ultralytics_metrics
-from utils import plot_readable_confusion_matrix # Import the new plotting utility
+from utils import plot_readable_confusion_matrix, calculate_prf1
 
 class DetectionMetricsCalculator:
     """
@@ -59,12 +59,6 @@ class DetectionMetricsCalculator:
         self.ultralytics_cm.process_batch(preds_tensor, gt_bboxes_tensor, gt_cls_tensor)
 
 
-    def _calculate_single_metric_set(self, tp, fp, fn):
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-        return {'precision': precision, 'recall': recall, 'f1_score': f1_score}
-
     def compute_metrics(self, requested_metrics=None, eval_output_dir: Path = None):
         """
         Computes metrics by deriving stats from the confusion matrix and handles plotting.
@@ -105,7 +99,8 @@ class DetectionMetricsCalculator:
             fn = matrix[i, :].sum() - tp
             gt = tp + fn
 
-            class_metrics_set = self._calculate_single_metric_set(tp, fp, fn)
+            # Use the centralized utility function
+            class_metrics_set = calculate_prf1(tp, fp, fn)
             results['per_class'][class_name] = {'TP': int(tp), 'FP': int(fp), 'FN': int(fn), 'GT_count': int(gt)}
             for metric_name in metrics_to_calculate:
                 if metric_name in class_metrics_set:
@@ -113,7 +108,8 @@ class DetectionMetricsCalculator:
             
             total_tp += tp; total_fp += fp; total_fn += fn; total_gt += gt
 
-        overall_metrics = self._calculate_single_metric_set(total_tp, total_fp, total_fn)
+        # Use the centralized utility function for overall metrics
+        overall_metrics = calculate_prf1(total_tp, total_fp, total_fn)
         results['overall'] = {'TP': int(total_tp), 'FP': int(total_fp), 'FN': int(total_fn), 'GT_count': int(total_gt)}
         for name in metrics_to_calculate:
             if name in overall_metrics:

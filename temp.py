@@ -1,247 +1,167 @@
-import os
-import yaml
-import random
-import shutil
 import logging
 from pathlib import Path
 import cv2
-import numpy as np
+import csv
+import json
+from collections import defaultdict, Counter
+import copy
 import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
-from detector import CoinDetector
 
-def create_detector_from_config(model_path, class_map, config_module, logger):
-    """Creates a fully configured CoinDetector instance from config."""
-    logger.info(f"Creating detector instance with model: {model_path}")
-    detector = CoinDetector(
-        model_path=model_path,
-        class_names_map=class_map,
-        per_class_conf_thresholds=config_module.PER_CLASS_CONF_THRESHOLDS,
-        default_conf_thresh=config_module.DEFAULT_CONF_THRESHOLD,
-        iou_suppression_threshold=config_module.IOU_SUPPRESSION_THRESHOLD,
-        box_color_map=config_module.BOX_COLOR_MAP,
-        default_box_color=config_module.DEFAULT_BOX_COLOR,
-        # Pass drawing parameters
-        box_thickness=config_module.BOX_THICKNESS,
-        text_thickness=config_module.TEXT_THICKNESS,
-        font_face=config_module.FONT_FACE,
-        font_scale=config_module.INFERENCE_FONT_SCALE
-    )
-    return detector
+import config
+from bbox_utils import calculate_iou
+from utils import (
+    parse_yolo_annotations,
+    draw_error_annotations,
+    calculate_prf1 # Import the centralized function
+)
+from metrics_calculator import DetectionMetricsCalculator
 
-LOG_FORMATTER = logging.Formatter('%(asctime)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s')
+class YoloEvaluator:
+    def __init__(self, detector, logger, config_module=config):
+        """
+        Initializes the YoloEvaluator.
+        Args:
+            detector (CoinDetector): A pre-configured instance of CoinDetector.
+            logger: A logger instance.
+            config_module: The configuration module.
+        """
+        self.logger = logger
+        self.config = config_module
+        self.detector = detector
 
-def setup_logging(log_file_path_obj, logger_name='yolo_script_logger'):
-    """Configures logging to both console and a file for a given logger."""
-    logger = logging.getLogger(logger_name)
-    
-    if logger.handlers: 
-        for handler in logger.handlers[:]:
-            logger.removeHandler(handler)
-            handler.close()
+    def _calculate_stats_for_image(self, predictions, ground_truths, class_names_map):
+        """
+        Calculates TP, FP, FN for a single image for the purpose of detailed error analysis and visualization.
+        This function does NOT accumulate totals; it identifies which specific boxes are TPs, FPs, or FNs.
 
-    logger.setLevel(logging.INFO)
-    file_handler = logging.FileHandler(log_file_path_obj, mode='w')
-    file_handler.setFormatter(LOG_FORMATTER)
-    logger.addHandler(file_handler)
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(LOG_FORMATTER)
-    logger.addHandler(stream_handler)
-    
-    logger.info(f"Logging for '{logger_name}' initialized. File output to: {log_file_path_obj}")
-    return logger
+        Returns:
+            fp_predictions (list): List of prediction dicts that are FPs.
+            fn_ground_truths (list): List of GT dicts that are FNs.
+        """
+        fp_predictions = []
+        fn_ground_truths = []
 
-def copy_log_to_run_directory(initial_log_path, run_dir_path, target_log_filename, logger_instance=None):
-    """Copies the log file to the specified run directory."""
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
-    if run_dir_path and initial_log_path.exists():
-        destination_log_path = Path(run_dir_path) / target_log_filename
-        shutil.copy2(initial_log_path, destination_log_path) 
-        log.info(f"Log file copied to: {destination_log_path}")
+        # Ensure GTs have a 'matched' flag for this run
+        gts_processed = copy.deepcopy(ground_truths)
+        for gt in gts_processed:
+            gt['matched_to_pred'] = False
 
-def create_unique_run_dir(base_dir_pathobj, run_name_prefix):
-    """Creates a unique run directory by appending a counter."""
-    candidate_dir = base_dir_pathobj / run_name_prefix
-    counter = 1
-    while candidate_dir.exists():
-        candidate_dir = base_dir_pathobj / f"{run_name_prefix}{counter}"
-        counter += 1
-    candidate_dir.mkdir(parents=True, exist_ok=False)
-    return candidate_dir
+        predictions_processed = copy.deepcopy(predictions)
 
-def validate_config_and_paths(config_module, mode, logger):
-    """Validates key settings from the config module based on the run mode."""
-    is_valid = True
-    logger.info("--- Validating Configuration ---")
+        # Iterate through predictions (sorted by confidence) to find TPs and FPs
+        for pred in sorted(predictions_processed, key=lambda x: x['conf'], reverse=True):
+            is_tp = False
+            pred_class_id = pred['cls']
+            pred['class_name'] = class_names_map.get(pred_class_id, f"ID_{pred_class_id}")
 
-    if not config_module.INPUTS_DIR.exists():
-        logger.error(f"Config Error: INPUTS_DIR does not exist at '{config_module.INPUTS_DIR}'.")
-        is_valid = False
+            best_match_gt_idx = -1
+            max_iou = 0
 
-    if not (0.999 < config_module.TRAIN_RATIO + config_module.VAL_RATIO + config_module.TEST_RATIO < 1.001):
-        logger.error("Config Error: Data split ratios must sum to 1.0.")
-        is_valid = False
+            # Find the best possible GT match for the current prediction
+            for gt_idx, gt in enumerate(gts_processed):
+                if not gt['matched_to_pred'] and pred_class_id == gt['cls']:
+                    iou = calculate_iou(pred['xyxy'], gt['xyxy'])
+                    if iou > max_iou:
+                        max_iou = iou
+                        best_match_gt_idx = gt_idx
 
-    if mode in ['evaluate', 'inference', 'train_direct_eval']:
-        if not config_module.MODEL_PATH_FOR_PREDICTION.exists():
-            logger.error(f"Config Error: MODEL_PATH_FOR_PREDICTION does not exist at '{config_module.MODEL_PATH_FOR_PREDICTION}'.")
-            is_valid = False
+            # If the best match has IoU > threshold, mark it as a TP and "consume" the GT
+            if max_iou > self.config.BOX_MATCHING_IOU_THRESHOLD:
+                if not gts_processed[best_match_gt_idx]['matched_to_pred']:
+                    gts_processed[best_match_gt_idx]['matched_to_pred'] = True
+                    is_tp = True
 
-    if mode == 'train' and config_module.EPOCHS <= 0:
-        logger.error(f"Config Error: EPOCHS must be > 0 for training, but is {config_module.EPOCHS}.")
-        is_valid = False
+            if not is_tp:
+                fp_predictions.append(pred)
 
-    return is_valid
+        # Any ground truth not matched by the end is a False Negative
+        for gt in gts_processed:
+            if not gt['matched_to_pred']:
+                gt['class_name'] = class_names_map.get(gt['cls'], f"ID_{gt['cls']}")
+                fn_ground_truths.append(gt)
 
-def discover_and_pair_image_labels(inputs_dir_pathobj, image_subdir_basename, label_subdir_basename, logger_instance=None):
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
-    image_label_pairs = []
-    valid_label_dirs_for_class_scan = []
-    for variant_dir in inputs_dir_pathobj.iterdir():
-        if variant_dir.is_dir():
-            image_dir = variant_dir / image_subdir_basename
-            label_dir = variant_dir / label_subdir_basename
-            if image_dir.is_dir() and label_dir.is_dir():
-                valid_label_dirs_for_class_scan.append(label_dir.resolve())
-                for ext in ['*.jpg', '*.jpeg', '*.png']:
-                    for img_path in image_dir.glob(ext):
-                        label_path = label_dir / (img_path.stem + ".txt")
-                        if label_path.is_file():
-                            image_label_pairs.append((img_path.resolve(), label_path.resolve()))
-    return image_label_pairs, valid_label_dirs_for_class_scan
+        return fp_predictions, fn_ground_truths
 
-def split_data(image_label_pairs, train_ratio, val_ratio, test_ratio, seed=42, logger_instance=None):
-    random.seed(seed)
-    random.shuffle(image_label_pairs)
-    total = len(image_label_pairs)
-    train_end = int(total * train_ratio)
-    val_end = train_end + int(total * val_ratio)
-    return image_label_pairs[:train_end], image_label_pairs[train_end:val_end], image_label_pairs[val_end:]
+    def perform_detailed_evaluation(self, eval_output_dir, all_image_label_pairs_eval):
+        model_path_to_eval = self.detector.model_path
+        class_names_map = self.detector.class_names_map
+        total_images = len(all_image_label_pairs_eval)
 
-def get_unique_class_ids(list_of_label_dir_paths, logger_instance=None):
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
-    unique_ids = set()
-    for label_dir_path in list_of_label_dir_paths:
-        for label_file in label_dir_path.glob('*.txt'):
-            with open(label_file, 'r') as f:
-                for line in f:
-                    if parts := line.strip().split():
-                        unique_ids.add(int(parts[0]))
-    return sorted(list(unique_ids))
+        self.logger.info(f"--- Starting Detailed Evaluation for Model: {model_path_to_eval} on {total_images} images ---")
+        incorrect_dir = eval_output_dir / self.config.INCORRECT_PREDICTIONS_SUBDIR
+        incorrect_dir.mkdir(parents=True, exist_ok=True)
+        
+        error_count = 0
+        
+        # Initialize the new stateless metrics calculator
+        metrics_calc = DetectionMetricsCalculator(class_names_map, self.logger, self.config)
 
-def load_class_names_from_yaml(yaml_path_obj, logger_instance=None):
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
-    if not yaml_path_obj.is_file(): return None
-    try:
-        with open(yaml_path_obj, 'r') as f: data = yaml.safe_load(f)
-        return data.get('names') if isinstance(data.get('names'), list) else None
-    except Exception:
-        return None
-
-def create_yolo_dataset_yaml(dataset_root_abs_path_str, train_rel_img_dir_paths, val_rel_img_dir_paths,
-                        test_rel_img_dir_paths, class_names_map, num_classes_val,
-                        output_yaml_path_obj, image_subdir_basename, label_subdir_basename, logger_instance=None):
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
-    names = [class_names_map.get(i, f"class_{i}") for i in range(num_classes_val)]
-    data = {
-        'path': dataset_root_abs_path_str,
-        'train': [str(p) for p in train_rel_img_dir_paths],
-        'val': [str(p) for p in val_rel_img_dir_paths],
-        'test': [str(p) for p in test_rel_img_dir_paths],
-        'nc': num_classes_val,
-        'names': names
-    }
-    output_yaml_path_obj.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_yaml_path_obj, 'w') as f: yaml.dump(data, f, sort_keys=False)
-    log.info(f"Successfully created dataset YAML: {output_yaml_path_obj}")
-
-def parse_yolo_annotations(label_file_path, logger_instance=None):
-    annotations = []
-    if Path(label_file_path).is_file():
-        with open(label_file_path, 'r') as f:
-            for line in f:
-                parts = line.strip().split()
-                if len(parts) == 5:
-                    annotations.append((int(parts[0]), *map(float, parts[1:])))
-    return annotations
-
-def plot_readable_confusion_matrix(matrix_data, class_names, output_path, title='Confusion Matrix'):
-    """
-    Generates and saves a readable confusion matrix plot using Seaborn.
-    Handles the case where the matrix includes an extra 'background' class.
-    """
-    logger = logging.getLogger('yolo_script_logger')
-    if matrix_data is None:
-        logger.warning("Confusion matrix data is None. Skipping plot generation.")
-        return
-
-    # FIX: Convert matrix data to integers to prevent format errors
-    matrix_data_int = matrix_data.astype(int)
-
-    plot_labels = list(class_names)
-
-    if matrix_data_int.shape[0] == len(plot_labels) + 1:
-        plot_labels.append('background')
-    
-    if matrix_data_int.shape[0] != len(plot_labels):
-        logger.error(
-            f"Shape mismatch for confusion matrix plot. Matrix is {matrix_data_int.shape}, "
-            f"but there are {len(plot_labels)} labels. Skipping plot."
-        )
-        return
-
-    df_cm = pd.DataFrame(matrix_data_int, index=plot_labels, columns=plot_labels)
-    
-    plt.figure(figsize=(12, 10))
-    heatmap = sns.heatmap(df_cm, annot=True, fmt='d', cmap='Blues', annot_kws={"size": 12})
-                          
-    heatmap.yaxis.set_ticklabels(heatmap.yaxis.get_ticklabels(), rotation=0, ha='right', fontsize=12)
-    heatmap.xaxis.set_ticklabels(heatmap.xaxis.get_ticklabels(), rotation=45, ha='right', fontsize=12)
-    
-    plt.ylabel('Predicted', fontsize=14)
-    plt.xlabel('True', fontsize=14)
-    plt.title(title, fontsize=16)
-    plt.tight_layout()
-    
-    try:
-        plt.savefig(output_path)
-        logger.info(f"Saved readable confusion matrix plot to: {output_path}")
-    except Exception as e:
-        logger.error(f"Failed to save confusion matrix plot to {output_path}: {e}")
-    finally:
-        plt.close()
-
-def draw_error_annotations(image_np, fp_predictions_to_draw, fn_gt_to_draw, class_names_map, config_module):
-    """Draws specified False Positive and False Negative boxes for error analysis."""
-    font = config_module.FONT_FACE
-    box_color_map = config_module.BOX_COLOR_MAP
-    default_box_color = config_module.DEFAULT_BOX_COLOR
-
-    # --- Draw False Positive Predicted Boxes ---
-    if fp_predictions_to_draw:
-        for pred_data in fp_predictions_to_draw:
-            x1, y1, x2, y2 = map(int, pred_data['xyxy'])
-            class_name = class_names_map.get(int(pred_data['cls']), f"ID_{int(pred_data['cls'])}")
-            label = f"FP: {class_name} {pred_data['conf']:.2f}"
-            color = box_color_map.get(class_name.lower().strip(), default_box_color)
+        for img_path, lbl_path in all_image_label_pairs_eval:
+            original_img = cv2.imread(str(img_path))
+            if original_img is None:
+                self.logger.warning(f"Could not read image {img_path}, skipping.")
+                continue
             
-            cv2.rectangle(image_np, (x1, y1), (x2, y2), color, config_module.BOX_THICKNESS)
-            (text_w, text_h), _ = cv2.getTextSize(label, font, config_module.ERROR_FP_FONT_SCALE, config_module.TEXT_THICKNESS)
-            cv2.rectangle(image_np, (x1, y1 - text_h - 5), (x1 + text_w, y1), color, -1)
-            cv2.putText(image_np, label, (x1, y1 - 5), font, config_module.ERROR_FP_FONT_SCALE, (0,0,0), config_module.TEXT_THICKNESS)
+            # Use return_raw=False as we only need the final predictions after NMS for evaluation
+            final_predictions = self.detector.predict(original_img.copy(), return_raw=False)
+            
+            h, w = original_img.shape[:2]
+            gts_raw_yolo_format = parse_yolo_annotations(lbl_path, self.logger)
+            current_gts = [{'cls': cid, 'xyxy': [(cx-cw/2)*w, (cy-ch/2)*h, (cx+cw/2)*w, (cy+ch/2)*h]} for cid, cx, cy, cw, ch in gts_raw_yolo_format]
+            
+            # THE FIX: Feed raw predictions and GTs to the confusion matrix.
+            # This is now the ONLY place where data for the final metrics is sent.
+            metrics_calc.update_confusion_matrix(final_predictions, current_gts)
 
-    # --- Draw Missed Ground Truth Boxes (False Negatives) ---
-    if fn_gt_to_draw:
-        for gt_data in fn_gt_to_draw:
-            x1, y1, x2, y2 = map(int, gt_data['xyxy'])
-            class_name = class_names_map.get(gt_data['cls'], f"ID_{gt_data['cls']}")
-            label = f"FN: {class_name}"
-            color = box_color_map.get(class_name.lower().strip(), default_box_color)
+            # Use the helper function to get FP/FN lists for drawing error images
+            fp_list, fn_list = self._calculate_stats_for_image(final_predictions, current_gts, class_names_map)
 
-            cv2.rectangle(image_np, (x1, y1), (x2, y2), color, config_module.BOX_THICKNESS)
-            (text_w, text_h), _ = cv2.getTextSize(label, font, config_module.ERROR_FN_FONT_SCALE, config_module.TEXT_THICKNESS)
-            cv2.rectangle(image_np, (x1, y2), (x1 + text_w, y2 + text_h + 5), color, -1)
-            cv2.putText(image_np, label, (x1, y2 + text_h + 5), font, config_module.ERROR_FN_FONT_SCALE, (0,0,0), config_module.TEXT_THICKNESS)
+            if fp_list or fn_list:
+                error_count += 1
+                
+                gt_class_names = [class_names_map.get(gt['cls']) for gt in current_gts]
+                gt_counts = Counter(gt_class_names)
+                gt_str = ", ".join([f"{count}x {name}" for name, count in sorted(gt_counts.items())]) if gt_counts else "None"
 
-    return image_np
+                pred_class_names = [pred['class_name'] for pred in final_predictions]
+                pred_counts = Counter(pred_class_names)
+                pred_str = ", ".join([f"{count}x {name}" for name, count in sorted(pred_counts.items())]) if pred_counts else "None"
+
+                self.logger.warning(f"Incorrect Prediction in: {img_path.name}\n"
+                                f"  - Ground Truth: [{gt_str}]\n"
+                                f"  - Predicted   : [{pred_str}]")
+
+                annotated_img = draw_error_annotations(original_img.copy(), fp_list, fn_list, class_names_map, self.config)
+                out_path = incorrect_dir / img_path.name
+                cv2.imwrite(str(out_path), annotated_img)
+
+        # --- Generate Final Metrics and Reports ---
+        self.logger.info("--- Final Corrected Metrics (Derived from Confusion Matrix) ---")
+        final_metrics_results = metrics_calc.compute_metrics(
+            requested_metrics=self.config.REQUESTED_METRICS,
+            eval_output_dir=eval_output_dir 
+        )
+
+        self.logger.info(f"Total images with errors (FP or FN): {error_count} / {total_images}")
+
+        # Log per-class metrics
+        for class_name, metrics in final_metrics_results.get('per_class', {}).items():
+            gt_count = metrics.get('TP', 0) + metrics.get('FN', 0)
+            log_line = f"Class: {class_name}\n"
+            log_line += f"  TP: {metrics.get('TP',0)}, FP: {metrics.get('FP',0)}, FN: {metrics.get('FN',0)} (GTs: {gt_count}), "
+            log_line += f"Precision: {metrics.get('precision', 0):.4f}, Recall: {metrics.get('recall', 0):.4f}, F1-score: {metrics.get('f1_score', 0):.4f}"
+            self.logger.info(log_line)
+
+        # Log overall metrics
+        overall = final_metrics_results.get('overall', {})
+        if overall:
+            total_gts = overall.get('TP', 0) + overall.get('FN', 0)
+            log_line_overall = "--- Overall Metrics ---\n"
+            log_line_overall += f"  Total TP: {overall.get('TP',0)}, Total FP: {overall.get('FP',0)}, Total FN: {overall.get('FN',0)} (Total GTs: {total_gts}), "
+            log_line_overall += f"Precision (Micro): {overall.get('precision_micro',0):.4f}, Recall (Micro): {overall.get('recall_micro',0):.4f}, F1-score (Micro): {overall.get('f1_score_micro',0):.4f}"
+            self.logger.info(log_line_overall)
+
+        metrics_file_path = eval_output_dir / self.config.METRICS_JSON_NAME
+        with open(metrics_file_path, 'w') as f:
+            json.dump(final_metrics_results, f, indent=4)
+        self.logger.info(f"Saved final metrics dictionary to: {metrics_file_path}")

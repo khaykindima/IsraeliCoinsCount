@@ -10,7 +10,8 @@ from utils import (
     get_unique_class_ids, load_class_names_from_yaml,
     create_yolo_dataset_yaml, validate_config_and_paths,
     create_unique_run_dir, create_detector_from_config,
-    plot_readable_confusion_matrix
+    plot_readable_confusion_matrix,
+    _get_relative_path_for_yolo_yaml
 )
 from evaluate_model import YoloEvaluator
 
@@ -93,10 +94,10 @@ def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, lo
     dataset_yaml_path = config.OUTPUT_DIR / config.DATASET_YAML_NAME
 
     create_yolo_dataset_yaml(
-        str(config.INPUTS_DIR),
-        _rel_dirs(train_pairs),
-        _rel_dirs(val_pairs),
-        _rel_dirs(test_pairs),
+        str(config.INPUTS_DIR.resolve()),
+        _get_relative_path_for_yolo_yaml(train_pairs, config.INPUTS_DIR),
+        _get_relative_path_for_yolo_yaml(val_pairs, config.INPUTS_DIR),
+        _get_relative_path_for_yolo_yaml(test_pairs, config.INPUTS_DIR),
         class_names_map,
         num_classes,
         dataset_yaml_path,
@@ -129,16 +130,34 @@ def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, lo
 
 
     if best_model_path:
-        eval_output_dir = run_dir / "custom_detailed_evaluation" # Save custom eval in its own subfolder
+        # --- OPTIMIZATION: Run standard validation on the test set post-training ---
+        logger.info(f"--- Starting Standard Ultralytics Validation on Test Set ---")
+        try:
+            # Re-initialize model with the best weights for validation
+            validation_model = YOLO(best_model_path)
+            validation_results = validation_model.val(
+                data=str(dataset_yaml_path),
+                split='test', # Use the test split defined in the YAML
+                project=str(run_dir),
+                name="standard_test_validation",
+                iou=config.BOX_MATCHING_IOU_THRESHOLD
+            )
+            logger.info(f"Standard validation results saved in: {validation_results.save_dir}")
+        except Exception as e:
+            logger.exception("An error occurred during standard post-training validation.")
+        # --- END OPTIMIZATION ---
+
+        # --- Proceed with Custom Detailed Evaluation ---
+        eval_output_dir = run_dir / "custom_detailed_evaluation_on_all_data"
         eval_output_dir.mkdir(parents=True, exist_ok=True)
         
 
         detector = create_detector_from_config(best_model_path, class_names_map, config, logger)
         evaluator = YoloEvaluator(detector, logger)
-        logger.info(f"--- Starting Custom Detailed Evaluation (Post-Training) ---")
+        logger.info(f"--- Starting Custom Detailed Evaluation (Post-Training) on ALL data ---")
         evaluator.perform_detailed_evaluation(
             eval_output_dir=eval_output_dir,
-            all_image_label_pairs_eval=pairs
+            all_image_label_pairs_eval=pairs # Evaluate on the entire dataset
         )
 
     copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}_train_final.log", logger)
@@ -158,13 +177,9 @@ def run_direct_evaluation_workflow(pairs, class_names_map, main_log_file, logger
     logger.info("--- Starting Standard Ultralytics Evaluation (model.val()) ---")
     standard_eval_dir = run_dir / "standard_ultralytics_eval_results"
     try:
-        # Create a temporary dataset.yaml for model.val()
-        # model.val() typically uses 'val' or 'test' split.
-        # For consistency with how perform_detailed_evaluation uses all pairs,
-        # we'll point the 'test' key in the temp YAML to all image directories.
         temp_yaml_path = run_dir / "temp_dataset_for_ultralytics_val.yaml"
-        # _rel_dirs gets unique parent directories of images relative to INPUTS_DIR
-        image_dirs_for_yaml = _rel_dirs(pairs) 
+        
+        image_dirs_for_yaml = _get_relative_path_for_yolo_yaml(pairs, config.INPUTS_DIR)
         
         num_classes_for_yaml = len(class_names_map)
         if not class_names_map and pairs: # Try to infer if map is empty but pairs exist
@@ -220,13 +235,6 @@ def run_direct_evaluation_workflow(pairs, class_names_map, main_log_file, logger
     )
 
     copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}_direct_eval_final.log", logger)
-
-def _rel_dirs(pairs):
-    """Gets unique parent directories of images, relative to config.INPUTS_DIR."""
-    if not pairs: return []
-    # Assuming pairs is list of (image_path_obj, label_path_obj)
-    # We need parent directory of image_path_obj
-    return sorted(list(set(p[0].parent.relative_to(config.INPUTS_DIR) for p in pairs)))
 
 def _find_best_model(model, run_dir, logger):
     # run_dir here is the Ultralytics specific run directory (e.g., project/name)
