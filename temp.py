@@ -1,290 +1,215 @@
-import os
-import yaml
-import random
-import shutil
 import logging
 from pathlib import Path
-import cv2 # For drawing
-import numpy as np # For drawing
-import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
-from detector import CoinDetector # Assuming detector.py is in the same directory or PYTHONPATH
+from ultralytics import YOLO
 
+# Project-specific modules
+import config
+from utils import (
+    setup_logging, copy_log_to_run_directory,
+    discover_and_pair_image_labels, split_data,
+    get_unique_class_ids, load_class_names_from_yaml,
+    create_yolo_dataset_yaml, validate_config_and_paths,
+    create_unique_run_dir, create_detector_from_config,
+    plot_readable_confusion_matrix,
+    _get_relative_path_for_yolo_yaml,
+    save_config_to_run_dir # ADDED: Import the new function
+)
+from evaluate_model import YoloEvaluator
 
-# Factory function for creating a detector 
-def create_detector_from_config(model_path, class_map, config_module, logger):
-    """
-    Creates a fully configured CoinDetector instance from config.
-    Args:
-        model_path (str or Path): Path to the model file. Will be converted to Path if str.
-        class_map (dict): Mapping of class IDs to class names.
-        config_module (module): The configuration module.
-        logger (logging.Logger): Logger instance.
-    Returns:
-        CoinDetector: Configured instance of the detector.
-    """
-    # Ensure model_path is a Path object before passing to CoinDetector
-    model_path_obj = Path(model_path)
-    logger.info(f"Creating detector instance with model: {model_path_obj}")
-    
-    detector = CoinDetector(
-        model_path=model_path_obj, # Pass the Path object
-        class_names_map=class_map,
-        per_class_conf_thresholds=config_module.PER_CLASS_CONF_THRESHOLDS,
-        default_conf_thresh=config_module.DEFAULT_CONF_THRESHOLD,
-        iou_suppression_threshold=config_module.IOU_SUPPRESSION_THRESHOLD,
-        box_color_map=config_module.BOX_COLOR_MAP,
-        default_box_color=config_module.DEFAULT_BOX_COLOR,
-        box_thickness=config_module.BOX_THICKNESS,
-        text_thickness=config_module.TEXT_THICKNESS,
-        font_face=config_module.FONT_FACE,
-        font_scale=config_module.INFERENCE_FONT_SCALE
-    )
-    return detector
+def main_train():
+    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    main_log_file = config.OUTPUT_DIR / f"{config.LOG_FILE_BASE_NAME}_train_or_direct_eval.log"
+    logger = setup_logging(main_log_file, logger_name='yolo_main_script_logger')
+    final_log_suffix = "_train_or_direct_eval_final.log"
 
-# --- Logger Setup ---
-LOG_FORMATTER = logging.Formatter('%(asctime)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s')
+    # --- Enhanced: Centralized configuration validation ---
+    is_training_mode = config.EPOCHS > 0
+    validation_mode = 'train' if is_training_mode else 'train_direct_eval'
+    if not validate_config_and_paths(config, validation_mode, logger):
+        return  # Exit if validation fails
 
-def setup_logging(log_file_path_obj, logger_name='yolo_script_logger'): # Changed default logger name
-    """Configures logging to both console and a file for a given logger."""
-    logger = logging.getLogger(logger_name)
-    
-    if logger.handlers: 
-        for handler in logger.handlers[:]:
-            logger.removeHandler(handler)
-            handler.close()
-
-    logger.setLevel(logging.INFO)
-    file_handler = logging.FileHandler(log_file_path_obj, mode='w')
-    file_handler.setFormatter(LOG_FORMATTER)
-    logger.addHandler(file_handler)
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(LOG_FORMATTER)
-    logger.addHandler(stream_handler)
-    
-    logger.info(f"Logging for '{logger_name}' initialized. File output to: {log_file_path_obj}")
-    return logger
-
-def copy_log_to_run_directory(initial_log_path, run_dir_path, target_log_filename, logger_instance=None):
-    """Copies the log file to the specified run directory."""
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
-    if run_dir_path and initial_log_path.exists():
-        destination_log_path = Path(run_dir_path) / target_log_filename
-        shutil.copy2(initial_log_path, destination_log_path) 
-        log.info(f"Log file copied to: {destination_log_path}")
-
-# --- Centralized function for creating unique run directories ---
-def create_unique_run_dir(base_dir_pathobj, run_name_prefix):
-    """Creates a unique run directory by appending a counter."""
-    candidate_dir = base_dir_pathobj / run_name_prefix
-    counter = 1
-    while candidate_dir.exists():
-        candidate_dir = base_dir_pathobj / f"{run_name_prefix}{counter}"
-        counter += 1
-    candidate_dir.mkdir(parents=True, exist_ok=False)
-    return candidate_dir
-
-def validate_config_and_paths(config_module, mode, logger):
-    """Validates key settings from the config module based on the run mode."""
-    is_valid = True
-    logger.info("--- Validating Configuration ---")
-
-    # Validate INPUTS_DIR
-    if not config_module.INPUTS_DIR.exists():
-        logger.error(f"Config Error: INPUTS_DIR does not exist at '{config_module.INPUTS_DIR}'.")
-        is_valid = False
-
-    # Validate data split ratios
-    if not (0.999 < config_module.TRAIN_RATIO + config_module.VAL_RATIO + config_module.TEST_RATIO < 1.001):
-        logger.error("Config Error: Data split ratios must sum to 1.0.")
-        is_valid = False
-
-    # Validate paths/settings specific to the run mode
-    if mode in ['evaluate', 'inference', 'train_direct_eval']:
-        # config_module.MODEL_PATH_FOR_PREDICTION is now a string
-        model_path_str = config_module.MODEL_PATH_FOR_PREDICTION
-        model_path_obj = Path(model_path_str) # Convert to Path for validation
-        if not model_path_obj.exists():
-            logger.error(f"Config Error: MODEL_PATH_FOR_PREDICTION does not exist at '{model_path_str}'.")
-            is_valid = False
-
-    if mode == 'train' and config_module.EPOCHS <= 0:
-        logger.error(f"Config Error: EPOCHS must be > 0 for training, but is {config_module.EPOCHS}.")
-        is_valid = False
-
-    return is_valid
-
-def discover_and_pair_image_labels(inputs_dir_pathobj, image_subdir_basename, label_subdir_basename, logger_instance=None):
-    """Scans subdirectories for image and label folders, and creates pairs."""
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
-    image_label_pairs = []
-    valid_label_dirs_for_class_scan = []
-    for variant_dir in inputs_dir_pathobj.iterdir():
-        if variant_dir.is_dir():
-            image_dir = variant_dir / image_subdir_basename
-            label_dir = variant_dir / label_subdir_basename
-            if image_dir.is_dir() and label_dir.is_dir():
-                valid_label_dirs_for_class_scan.append(label_dir.resolve())
-                for ext in ['*.jpg', '*.jpeg', '*.png']:
-                    for img_path in image_dir.glob(ext):
-                        label_path = label_dir / (img_path.stem + ".txt")
-                        if label_path.is_file():
-                            image_label_pairs.append((img_path.resolve(), label_path.resolve()))
-    return image_label_pairs, valid_label_dirs_for_class_scan
-
-def split_data(image_label_pairs, train_ratio, val_ratio, test_ratio, seed=42, logger_instance=None):
-    """Splits image-label pairs into train, validation, and test sets."""
-    random.seed(seed)
-    random.shuffle(image_label_pairs)
-    total = len(image_label_pairs)
-    train_end = int(total * train_ratio)
-    val_end = train_end + int(total * val_ratio)
-    return image_label_pairs[:train_end], image_label_pairs[train_end:val_end], image_label_pairs[val_end:]
-
-def get_unique_class_ids(list_of_label_dir_paths, logger_instance=None):
-    """Scans label files to find all unique class IDs."""
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
-    unique_ids = set()
-    for label_dir_path in list_of_label_dir_paths:
-        for label_file in label_dir_path.glob('*.txt'):
-            with open(label_file, 'r') as f:
-                for line in f:
-                    if parts := line.strip().split():
-                        unique_ids.add(int(parts[0]))
-    return sorted(list(unique_ids))
-
-def load_class_names_from_yaml(yaml_path_obj, logger_instance=None): # Renamed for clarity
-    """Loads the 'names' list from a YAML file."""
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
-    if not yaml_path_obj.is_file(): return None
     try:
-        with open(yaml_path_obj, 'r') as f: data = yaml.safe_load(f)
-        return data.get('names') if isinstance(data.get('names'), list) else None
-    except Exception:
-        return None
-
-def create_yolo_dataset_yaml(dataset_root_abs_path_str, train_rel_img_dir_paths, val_rel_img_dir_paths,
-                        test_rel_img_dir_paths, class_names_map, num_classes_val,
-                        output_yaml_path_obj, image_subdir_basename, label_subdir_basename, logger_instance=None): # Renamed for clarity
-    """Creates the dataset.yaml file for YOLO training."""
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
-    names = [class_names_map.get(i, f"class_{i}") for i in range(num_classes_val)]
-    data = {
-        'path': dataset_root_abs_path_str,
-        'train': [str(p) for p in train_rel_img_dir_paths],
-        'val': [str(p) for p in val_rel_img_dir_paths],
-        'test': [str(p) for p in test_rel_img_dir_paths],
-        'nc': num_classes_val,
-        'names': names
-    }
-    output_yaml_path_obj.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_yaml_path_obj, 'w') as f: yaml.dump(data, f, sort_keys=False)
-    log.info(f"Successfully created dataset YAML: {output_yaml_path_obj}")
-
-def parse_yolo_annotations(label_file_path, logger_instance=None):
-    """Parses a YOLO format label file for detailed annotations."""
-    annotations = []
-    if Path(label_file_path).is_file():
-        with open(label_file_path, 'r') as f:
-            for line in f:
-                parts = line.strip().split()
-                if len(parts) == 5:
-                    annotations.append((int(parts[0]), *map(float, parts[1:])))
-    return annotations
-
-def plot_readable_confusion_matrix(matrix_data, class_names, output_path, title='Confusion Matrix'):
-    """
-    Generates and saves a readable confusion matrix plot using Seaborn.
-    Handles the case where the matrix includes an extra 'background' class.
-    """
-    logger = logging.getLogger('yolo_script_logger') # Use a consistent logger name or pass as arg
-    if matrix_data is None:
-        logger.warning("Confusion matrix data is None. Skipping plot generation.")
-        return
-
-    matrix_data_int = matrix_data.astype(int)
-    plot_labels = list(class_names)
-
-    if matrix_data_int.shape[0] == len(plot_labels) + 1:
-        plot_labels.append('background')
-    
-    if matrix_data_int.shape[0] != len(plot_labels):
-        logger.error(
-            f"Shape mismatch for confusion matrix plot. Matrix is {matrix_data_int.shape}, "
-            f"but there are {len(plot_labels)} labels. Skipping plot."
+        logger.info("--- Step 0 & 1: Data Preparation & Class Names ---")
+        image_label_pairs, label_dirs = discover_and_pair_image_labels(
+            config.INPUTS_DIR, config.IMAGE_SUBDIR_BASENAME, config.LABEL_SUBDIR_BASENAME, logger
         )
-        return
+        if not image_label_pairs:
+            # Use a more specific exception to be caught by the enhanced handler
+            raise FileNotFoundError("No image-label pairs found. Check INPUTS_DIR and its structure.")
 
-    df_cm = pd.DataFrame(matrix_data_int, index=plot_labels, columns=plot_labels)
-    
-    plt.figure(figsize=(12, 10))
-    heatmap = sns.heatmap(df_cm, annot=True, fmt='d', cmap='Blues', annot_kws={"size": 12})
-                          
-    heatmap.yaxis.set_ticklabels(heatmap.yaxis.get_ticklabels(), rotation=0, ha='right', fontsize=12)
-    heatmap.xaxis.set_ticklabels(heatmap.xaxis.get_ticklabels(), rotation=45, ha='right', fontsize=12)
-    
-    plt.ylabel('Predicted', fontsize=14)
-    plt.xlabel('True', fontsize=14)
-    plt.title(title, fontsize=16)
-    plt.tight_layout()
-    
-    try:
-        plt.savefig(output_path)
-        logger.info(f"Saved readable confusion matrix plot to: {output_path}")
+        class_names_map, num_classes = load_or_derive_class_names(label_dirs, logger)
+        if num_classes == 0:
+            raise ValueError("Number of classes is zero. Cannot proceed.")
+
+        logger.info(f"Final number of classes: {num_classes}")
+        logger.info(f"Class names map: {class_names_map}")
+
+        if is_training_mode:
+            run_training_workflow(image_label_pairs, class_names_map, num_classes, main_log_file, logger)
+        else:
+            run_direct_evaluation_workflow(image_label_pairs, class_names_map, main_log_file, logger)
+
+    # --- Enhanced: More specific error handling ---
+    except (FileNotFoundError, ValueError) as e:
+        # Catch configuration or data-related errors
+        finalize_and_exit(logger, main_log_file, None, f"A pre-run error occurred: {e}", final_log_suffix)
+    except RuntimeError as e:
+        # Catch critical errors during model execution (e.g., from Ultralytics library)
+        finalize_and_exit(logger, main_log_file, None, f"A critical runtime error occurred: {e}", final_log_suffix)
     except Exception as e:
-        logger.error(f"Failed to save confusion matrix plot to {output_path}: {e}")
-    finally:
-        plt.close()
+        # General catch-all for any other unexpected errors
+        logger.exception("An unexpected error occurred during the main workflow.")
+        finalize_and_exit(logger, main_log_file, None, f"An unexpected error occurred: {e}", final_log_suffix)
 
-def draw_error_annotations(image_np, fp_predictions_to_draw, fn_gt_to_draw, class_names_map, config_module):
-    """Draws specified False Positive and False Negative boxes for error analysis."""
-    font = config_module.FONT_FACE
-    box_color_map = config_module.BOX_COLOR_MAP
-    default_box_color = config_module.DEFAULT_BOX_COLOR
+def load_or_derive_class_names(label_dirs, logger):
+    names_from_yaml = load_class_names_from_yaml(config.INPUTS_DIR / config.ORIGINAL_DATA_YAML_NAME, logger)
+    if names_from_yaml is not None:
+        return {i: str(name).strip() for i, name in enumerate(names_from_yaml)}, len(names_from_yaml)
 
-    if fp_predictions_to_draw:
-        for pred_data in fp_predictions_to_draw:
-            x1, y1, x2, y2 = map(int, pred_data['xyxy'])
-            class_name = class_names_map.get(int(pred_data['cls']), f"ID_{int(pred_data['cls'])}")
-            label = f"FP: {class_name} {pred_data['conf']:.2f}"
-            color = box_color_map.get(class_name.lower().strip(), default_box_color)
-            
-            cv2.rectangle(image_np, (x1, y1), (x2, y2), color, config_module.BOX_THICKNESS)
-            (text_w, text_h), _ = cv2.getTextSize(label, font, config_module.ERROR_FP_FONT_SCALE, config_module.TEXT_THICKNESS)
-            cv2.rectangle(image_np, (x1, y1 - text_h - 5), (x1 + text_w, y1), color, -1)
-            cv2.putText(image_np, label, (x1, y1 - 5), font, config_module.ERROR_FP_FONT_SCALE, (0,0,0), config_module.TEXT_THICKNESS)
+    logger.warning("Falling back to deriving class names from labels.")
+    if not label_dirs:
+        return {}, 0
 
-    if fn_gt_to_draw:
-        for gt_data in fn_gt_to_draw:
-            x1, y1, x2, y2 = map(int, gt_data['xyxy'])
-            class_name = class_names_map.get(gt_data['cls'], f"ID_{gt_data['cls']}")
-            label = f"GT: {class_name}"
-            color = box_color_map.get(class_name.lower().strip(), default_box_color)
+    unique_ids = get_unique_class_ids(label_dirs, logger)
+    if not unique_ids:
+        return {}, 0
 
-            cv2.rectangle(image_np, (x1, y1), (x2, y2), color, config_module.BOX_THICKNESS)
-            (text_w, text_h), _ = cv2.getTextSize(label, font, config_module.ERROR_FN_FONT_SCALE, config_module.TEXT_THICKNESS)
-            cv2.rectangle(image_np, (x1, y2), (x1 + text_w, y2 + text_h + 5), color, -1)
-            cv2.putText(image_np, label, (x1, y2 + text_h + 5), font, config_module.ERROR_FN_FONT_SCALE, (0,0,0), config_module.TEXT_THICKNESS)
+    num_classes = max(unique_ids) + 1 if unique_ids else 0
+    return {i: f"class_{i}" for i in range(num_classes)}, num_classes
 
-    return image_np
+def finalize_and_exit(logger, main_log_file, run_dir, message, final_log_suffix):
+    logger.error(message)
+    copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}{final_log_suffix}", logger)
+    return
 
-def calculate_prf1(tp, fp, fn):
-    """
-    Calculates precision, recall, and F1-score from TP, FP, and FN counts.
-    This is a centralized utility function to avoid code duplication.
-    """
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-    return {'precision': precision, 'recall': recall, 'f1_score': f1_score}
+def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, logger):
+    logger.info("--- Starting Training ---")
 
-def _get_relative_path_for_yolo_yaml(pairs, inputs_dir):
-    """
-    Gets unique parent directories of images from pairs, relative to a base directory.
-    This is a helper for creating dataset.yaml files.
-    """
-    if not pairs:
-        return []
-    relative_dirs = {str(p[0].parent.relative_to(inputs_dir)) for p in pairs}
-    return sorted(list(relative_dirs))
+    train_pairs, val_pairs, test_pairs = split_data(
+        image_label_pairs=pairs,
+        train_ratio=config.TRAIN_RATIO,
+        val_ratio=config.VAL_RATIO,
+        test_ratio=config.TEST_RATIO,
+        logger_instance=logger
+    )
+    dataset_yaml_path = config.OUTPUT_DIR / config.DATASET_YAML_NAME
+
+    create_yolo_dataset_yaml(
+        str(config.INPUTS_DIR.resolve()),
+        _get_relative_path_for_yolo_yaml(train_pairs, config.INPUTS_DIR),
+        _get_relative_path_for_yolo_yaml(val_pairs, config.INPUTS_DIR),
+        _get_relative_path_for_yolo_yaml(test_pairs, config.INPUTS_DIR),
+        class_names_map,
+        num_classes,
+        dataset_yaml_path,
+        config.IMAGE_SUBDIR_BASENAME,
+        config.LABEL_SUBDIR_BASENAME,
+        logger
+    )
+
+    if not dataset_yaml_path.exists():
+        raise FileNotFoundError(f"Dataset YAML creation failed. Expected at: {dataset_yaml_path}")
+
+    model = YOLO(config.MODEL_NAME_FOR_TRAINING)
+    training_dir = config.OUTPUT_DIR / "training_runs"
+    training_dir.mkdir(parents=True, exist_ok=True)
+
+    results = model.train(
+        data=str(dataset_yaml_path),
+		epochs=config.EPOCHS,
+		imgsz=config.IMG_SIZE,
+        project=str(training_dir),
+		name=f"{Path(config.MODEL_NAME_FOR_TRAINING).stem}_custom",
+        optimizer=config.TRAINING_OPTIMIZER,
+		lr0=config.TRAINING_LR0,
+		lrf=config.TRAINING_LRF,
+        exist_ok=False,
+		**config.AUGMENTATION_PARAMS)
+
+    run_dir = Path(results.save_dir)
+    save_config_to_run_dir(run_dir, logger) # ADDED: Save config to the training run directory
+
+    best_model_path = _find_best_model(model, run_dir, logger)
+
+
+    if best_model_path:
+        # --- OPTIMIZATION: Run standard validation on the test set post-training ---
+        logger.info(f"--- Starting Standard Ultralytics Validation on Test Set ---")
+        try:
+            # Re-initialize model with the best weights for validation
+            validation_model = YOLO(best_model_path) # best_model_path is already a Path object
+            validation_results = validation_model.val(
+                data=str(dataset_yaml_path),
+                split='test', # Use the test split defined in the YAML
+                project=str(run_dir),
+                name="standard_test_validation",
+                iou=config.BOX_MATCHING_IOU_THRESHOLD
+            )
+            logger.info(f"Standard validation results saved in: {validation_results.save_dir}")
+        except Exception as e:
+            logger.exception("An error occurred during standard post-training validation.")
+        # --- END OPTIMIZATION ---
+
+        # --- Proceed with Custom Detailed Evaluation ---
+        eval_output_dir = run_dir / "custom_detailed_evaluation_on_all_data"
+        eval_output_dir.mkdir(parents=True, exist_ok=True)
+
+        # best_model_path is already a Path object from _find_best_model
+        detector = create_detector_from_config(best_model_path, class_names_map, config, logger)
+        evaluator = YoloEvaluator(detector, logger)
+        logger.info(f"--- Starting Custom Detailed Evaluation (Post-Training) on ALL data ---")
+        evaluator.perform_detailed_evaluation(
+            eval_output_dir=eval_output_dir,
+            all_image_label_pairs_eval=pairs # Evaluate on the entire dataset
+        )
+
+    copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}_train_final.log", logger)
+
+def run_direct_evaluation_workflow(pairs, class_names_map, main_log_file, logger):
+    logger.info("--- Starting Direct Evaluation Workflow ---")
+    # config.MODEL_PATH_FOR_PREDICTION is now a string, convert to Path
+    model_path_str = config.MODEL_PATH_FOR_PREDICTION
+    model_path = Path(model_path_str)
+
+    base_dir = config.OUTPUT_DIR / "direct_evaluation_runs"
+    # Use model_path.stem (Path object needed for .stem)
+    run_name_prefix = f"{model_path.stem}_direct_eval_run"
+    run_dir = create_unique_run_dir(base_dir, run_name_prefix)
+    logger.info(f"Direct evaluation run directory: {run_dir}")
+    save_config_to_run_dir(run_dir, logger) # ADDED: Save config to the direct evaluation run directory
+
+    # Pass the Path object to create_detector_from_config
+    detector = create_detector_from_config(model_path, class_names_map, config, logger)
+
+    # --- Custom Detailed Evaluation ---
+    logger.info(f"--- Starting Custom Detailed Evaluation ---")
+    custom_eval_output_dir = run_dir / "custom_detailed_evaluation"
+    custom_eval_output_dir.mkdir(parents=True, exist_ok=True)
+
+    evaluator = YoloEvaluator(detector, logger)
+    evaluator.perform_detailed_evaluation(
+        eval_output_dir=custom_eval_output_dir,
+        all_image_label_pairs_eval=pairs
+    )
+
+    copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}_direct_eval_final.log", logger)
+
+
+def _find_best_model(model, run_dir, logger):
+    # run_dir here is the Ultralytics specific run directory (e.g., project/name)
+    if hasattr(model, 'trainer') and hasattr(model.trainer, 'best') and Path(model.trainer.best).exists():
+        path = Path(model.trainer.best).resolve()
+        logger.info(f"Best model from trainer: {path}")
+        return path
+    # Fallback if trainer object doesn't have 'best' or it's not found
+    # Ultralytics saves weights typically in 'run_dir/weights/best.pt'
+    fallback_path = run_dir / "weights" / "best.pt"
+    if fallback_path.exists():
+        logger.info(f"Best model found at fallback path: {fallback_path}")
+        return fallback_path.resolve()
+
+    logger.warning(f"No best model found in {run_dir}. Check training outputs.")
+    return None
+
+if __name__ == '__main__':
+    main_train()

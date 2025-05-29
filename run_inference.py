@@ -10,7 +10,8 @@ try:
     from utils import (
         setup_logging, load_class_names_from_yaml, 
         create_detector_from_config,
-        validate_config_and_paths
+        validate_config_and_paths,
+        save_config_to_run_dir 
     )
 except ImportError as e:
     print(f"ImportError: {e}. Make sure config.py, utils.py, and detector.py are in the same directory or PYTHONPATH")
@@ -194,6 +195,8 @@ def setup_inference():
     
     # Replace temp_logger usage with the fully configured logger
     logger.info(f"Switched to main logger. Log file: {log_file_path}")
+	
+    save_config_to_run_dir(current_run_dir, logger)
 
 
     if not validate_config_and_paths(config, 'inference', logger):

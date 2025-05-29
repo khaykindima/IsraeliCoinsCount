@@ -6,7 +6,7 @@ import cv2 # Import for font selection
 # Allow overriding the input directory via an environment variable for portability.
 # Fallback to the original hardcoded path if the env var is not set.
 INPUTS_DIR_ENV = os.getenv("YOLO_COINS_INPUT_DIR")
-INPUTS_DIR = Path(INPUTS_DIR_ENV) if INPUTS_DIR_ENV else Path("/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v38i.yolov5pytorch")
+INPUTS_DIR = Path(INPUTS_DIR_ENV) if INPUTS_DIR_ENV else Path("/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v48i.yolov5pytorch")
     # Example expected structure for INPUTS_DIR:
     # INPUTS_DIR/
     #  ├── data.yaml (ORIGINAL_DATA_YAML_NAME)
@@ -39,15 +39,16 @@ CONFUSION_MATRIX_PLOT_NAME = "confusion_matrix.png" # Filename for the saved plo
 # --- Model Configuration ---
 # MODEL_NAME_FOR_TRAINING can be a base model like "yolov8n.pt" to start fresh,
 # or a path to a .pt file to resume training or use as a base.
-MODEL_NAME_FOR_TRAINING = "yolov8n_best.pt" # You can change this to other YOLOv11 variants like 'yolov11s.pt' etc.
-
+# MODEL_NAME_FOR_TRAINING = "yolov8n_best.pt" # You can change this to other YOLOv11 variants like 'yolov11s.pt' etc.
+MODEL_NAME_FOR_TRAINING = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/yolo_experiment_output/training_runs/yolov8n_best_custom2/weights/best.pt"
 # MODEL_PATH_FOR_PREDICTION should be the path to your trained model (e.g., best.pt from a training run)
 # This will be used by evaluate_model.py and run_inference.py
 # Example: MODEL_PATH_FOR_PREDICTION = OUTPUT_DIR / "training_runs" / "yolov8n_custom_training" / "weights" / "best.pt"
-MODEL_PATH_FOR_PREDICTION = "yolov8n_best.pt" # Placeholder - update this to your actual best model path
+# MODEL_PATH_FOR_PREDICTION = "yolov8n_best.pt" # Placeholder - update this to your actual best model path
+MODEL_PATH_FOR_PREDICTION = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/yolo_experiment_output/training_runs/yolov8n_best_custom2/weights/best.pt"
 
 # --- Training Parameters ---
-EPOCHS = 5 # Set to >0 for training, 0 for prediction/evaluation only using MODEL_PATH_FOR_PREDICTION
+EPOCHS = 0 # Set to >0 for training, 0 for prediction/evaluation only using MODEL_PATH_FOR_PREDICTION
 IMG_SIZE = 640
 TRAINING_OPTIMIZER = 'Adam' # Default is 'SGD', or 'AdamW'
 TRAINING_LR0 = 0.0001 # Initial learning rate

@@ -76,7 +76,7 @@ def rename_roboflow_files(root_dir):
 
 if __name__ == "__main__":
     # ❗️ IMPORTANT: Replace this with the actual path to your folder
-    target_folder = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data"
+    target_folder = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v48i.yolov5pytorch"
 
     if not os.path.isdir(target_folder):
         print(f"Error: The directory '{target_folder}' does not exist.")

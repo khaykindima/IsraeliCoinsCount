@@ -10,8 +10,8 @@ from utils import (
     get_unique_class_ids, load_class_names_from_yaml,
     create_yolo_dataset_yaml, validate_config_and_paths,
     create_unique_run_dir, create_detector_from_config,
-    plot_readable_confusion_matrix,
-    _get_relative_path_for_yolo_yaml
+    _get_relative_path_for_yolo_yaml,
+    save_config_to_run_dir
 )
 from evaluate_model import YoloEvaluator
 
@@ -126,6 +126,9 @@ def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, lo
 		**config.AUGMENTATION_PARAMS)
         
     run_dir = Path(results.save_dir)
+	
+    save_config_to_run_dir(run_dir, logger) 
+
     best_model_path = _find_best_model(model, run_dir, logger)
 
 
@@ -164,12 +167,15 @@ def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, lo
 
 def run_direct_evaluation_workflow(pairs, class_names_map, main_log_file, logger):
     logger.info("--- Starting Direct Evaluation Workflow ---")
-    model_path = Path(config.MODEL_PATH_FOR_PREDICTION)
+    model_path_str = config.MODEL_PATH_FOR_PREDICTION
+    model_path = Path(model_path_str)
 
     base_dir = config.OUTPUT_DIR / "direct_evaluation_runs"
     run_name_prefix = f"{model_path.stem}_direct_eval_run"
     run_dir = create_unique_run_dir(base_dir, run_name_prefix)
     logger.info(f"Direct evaluation run directory: {run_dir}")
+	
+    save_config_to_run_dir(run_dir, logger)
     
     detector = create_detector_from_config(model_path, class_names_map, config, logger)
 

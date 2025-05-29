@@ -12,6 +12,53 @@ import matplotlib.pyplot as plt
 from detector import CoinDetector
 
 
+def draw_ground_truth_boxes(image_np, ground_truths_list, class_names_map, config_module):
+    """
+    Draws ground truth bounding boxes on an image for visualization.
+
+    Args:
+        image_np (np.ndarray): The image to draw on.
+        ground_truths_list (list): A list of ground truth dictionaries.
+                                   Each dict: {'cls': class_id, 'xyxy': [x1, y1, x2, y2]}
+        class_names_map (dict): A map from class ID to class name.
+        config_module (module): The configuration module for styling.
+    """
+    img_to_draw_on = image_np.copy()
+    font = config_module.FONT_FACE
+    box_color_map = config_module.BOX_COLOR_MAP
+    default_box_color = config_module.DEFAULT_BOX_COLOR
+    
+    for gt_data in ground_truths_list:
+        x1, y1, x2, y2 = map(int, gt_data['xyxy'])
+        class_id = gt_data['cls']
+        class_name = class_names_map.get(class_id, f"ID_{class_id}")
+        label = f"GT: {class_name}"
+        color = box_color_map.get(class_name.lower().strip(), default_box_color)
+
+        # Use drawing parameters from config
+        cv2.rectangle(img_to_draw_on, (x1, y1), (x2, y2), color, config_module.BOX_THICKNESS)
+        (text_w, text_h), _ = cv2.getTextSize(label, font, config_module.INFERENCE_FONT_SCALE, config_module.TEXT_THICKNESS)
+        cv2.rectangle(img_to_draw_on, (x1, y1 - text_h - 5), (x1 + text_w, y1), color, -1)
+        cv2.putText(img_to_draw_on, label, (x1, y1 - 5), font, config_module.INFERENCE_FONT_SCALE, (0,0,0), config_module.TEXT_THICKNESS)
+        
+    return img_to_draw_on
+
+def save_config_to_run_dir(run_dir_path, logger):
+    """Copies config.py to the specified run directory for reproducibility."""
+    try:
+        # Assuming config.py is in the project root directory where the script is run
+        config_source_path = Path("config.py")
+        if not config_source_path.exists():
+             logger.warning("config.py not found. Skipping save to run directory.")
+             return
+
+        destination_path = Path(run_dir_path) / "config.py"
+        shutil.copy2(config_source_path, destination_path)
+        logger.info(f"Saved a copy of the configuration to {destination_path}")
+    except Exception as e:
+        logger.error(f"Could not save config.py to run directory: {e}")
+
+
 # Factory function for creating a detector 
 def create_detector_from_config(model_path, class_map, config_module, logger):
     """
