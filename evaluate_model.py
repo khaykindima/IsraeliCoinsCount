@@ -6,7 +6,7 @@ from collections import Counter
 import pandas as pd
 
 import config
-from bbox_utils import match_predictions, calculate_iou
+from bbox_utils import match_predictions, calculate_iou, calculate_aspect_ratio
 from utils import (
     parse_yolo_annotations,
     draw_error_annotations,
@@ -61,11 +61,32 @@ class YoloEvaluator:
             
             # --- Populate Excel data from the consistent results ---
             for pred_tp in tp_after: 
-                all_detection_correctness_data.append({'image_name': img_path.name, 'class_name': pred_tp['class_name'], 'probability': pred_tp['conf'], 'box_correctness': 'TP'})
+                all_detection_correctness_data.append({
+                    'image_name': img_path.name, 
+                    'class_name': pred_tp['class_name'], 
+                    'probability': pred_tp['conf'], 
+                    'pred_aspect_ratio': calculate_aspect_ratio(pred_tp['xyxy']),
+                    'gt_aspect_ratio': calculate_aspect_ratio(pred_tp['matched_gt_xyxy']) if 'matched_gt_xyxy' in pred_tp else None, 
+                    'box_correctness': 'TP'
+                })
             for pred_fp in fp_after: 
-                all_detection_correctness_data.append({'image_name': img_path.name, 'class_name': pred_fp['class_name'], 'probability': pred_fp['conf'], 'box_correctness': 'FP'})
+                all_detection_correctness_data.append({
+                    'image_name': img_path.name, 
+                    'class_name': pred_fp['class_name'], 
+                    'probability': pred_fp['conf'], 
+                    'pred_aspect_ratio': calculate_aspect_ratio(pred_fp['xyxy']), 
+                    'gt_aspect_ratio': None, # No GT for FP
+                    'box_correctness': 'FP'
+                })
             for gt_fn in fn_after: 
-                all_detection_correctness_data.append({'image_name': img_path.name, 'class_name': gt_fn['class_name'], 'probability': None, 'box_correctness': 'FN'})
+                all_detection_correctness_data.append({
+                    'image_name': img_path.name, 
+                    'class_name': gt_fn['class_name'], 
+                    'probability': None,
+                    'pred_aspect_ratio': None, 
+                    'gt_aspect_ratio': calculate_aspect_ratio(gt_fn['xyxy']), 
+                    'box_correctness': 'FN'
+                })
 
             metrics_calc.update_confusion_matrix(preds_after, ground_truths)
             
@@ -177,7 +198,14 @@ class YoloEvaluator:
                 # Sheet 2: Detailed Detections
                 if detection_correctness_data:
                     df_detections = pd.DataFrame(detection_correctness_data)
-                    df_detections = df_detections[['image_name', 'class_name', 'probability', 'box_correctness']].sort_values(by=['image_name', 'box_correctness', 'probability'], ascending=[True, True, False])
+                    # MODIFIED: Column list and order updated
+                    column_order = ['image_name', 'class_name', 'probability', 
+                                    'pred_aspect_ratio', 'gt_aspect_ratio', 
+                                    'box_correctness']
+                    df_detections = df_detections[column_order].sort_values(
+                        by=['image_name', 'box_correctness', 'probability'], 
+                        ascending=[True, True, False]
+                    )
                     df_detections.to_excel(writer, sheet_name='Detailed Detections', index=False)
 
         except Exception as e:

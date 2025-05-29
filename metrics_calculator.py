@@ -16,16 +16,31 @@ class DetectionMetricsCalculator:
             class_names_map (dict): Maps class IDs (int) to class names (str).
             logger (logging.Logger, optional): Logger instance.
             config_module (module, optional): The project's config module for settings
-                                             like CONFUSION_MATRIX_PLOT_NAME.
+                                             like CONFUSION_MATRIX_PLOT_NAME and BOX_MATCHING_IOU_THRESHOLD.
         """
         self.class_names_map = class_names_map
         self.num_classes = len(class_names_map)
         self.logger = logger if logger else logging.getLogger(__name__)
         self.config = config_module # Store config for plot name etc.
         
+        # Get the IoU threshold from the config module for initializing the ConfusionMatrix
+        # Default to a common value (e.g., 0.45, which is Ultralytics' default for CM) if not specified,
+        # though your config.py already has BOX_MATCHING_IOU_THRESHOLD.
+        iou_threshold_for_cm = 0.45 # Default fallback
+        if self.config and hasattr(self.config, 'BOX_MATCHING_IOU_THRESHOLD'): #
+            iou_threshold_for_cm = self.config.BOX_MATCHING_IOU_THRESHOLD #
+            self.logger.info(f"Using BOX_MATCHING_IOU_THRESHOLD: {iou_threshold_for_cm} for Ultralytics ConfusionMatrix.") #
+        else:
+            self.logger.warning( #
+                f"BOX_MATCHING_IOU_THRESHOLD not found in config. Using default IoU {iou_threshold_for_cm} for Ultralytics ConfusionMatrix." #
+            )
+
         # Initialize Ultralytics Confusion Matrix. It is now the single source of truth for metrics.
-        self.ultralytics_cm = ultralytics_metrics.ConfusionMatrix(nc=self.num_classes)
-        self.logger.info(f"MetricsCalculator initialized for {self.num_classes} classes. Ultralytics CM is ready.")
+        self.ultralytics_cm = ultralytics_metrics.ConfusionMatrix(
+            nc=self.num_classes, 
+            iou_thres=iou_threshold_for_cm 
+        )
+        self.logger.info(f"MetricsCalculator initialized for {self.num_classes} classes. Ultralytics CM is ready with IoU threshold: {iou_threshold_for_cm}.") #
 
     def update_confusion_matrix(self, predictions_for_image, ground_truths_for_image):
         """

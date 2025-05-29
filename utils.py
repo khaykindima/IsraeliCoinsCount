@@ -83,11 +83,14 @@ def create_detector_from_config(model_path, class_map, config_module, logger):
         iou_suppression_threshold=config_module.IOU_SUPPRESSION_THRESHOLD,
         box_color_map=config_module.BOX_COLOR_MAP,
         default_box_color=config_module.DEFAULT_BOX_COLOR,
-        # ADDED: Pass drawing parameters
         box_thickness=config_module.BOX_THICKNESS,
         text_thickness=config_module.TEXT_THICKNESS,
         font_face=config_module.FONT_FACE,
-        font_scale=config_module.INFERENCE_FONT_SCALE
+        font_scale=config_module.INFERENCE_FONT_SCALE,
+        enable_aspect_ratio_filter=config_module.ENABLE_ASPECT_RATIO_FILTER,
+        aspect_ratio_filter_threshold=config_module.ASPECT_RATIO_FILTER_THRESHOLD,
+        enable_per_class_confidence=config_module.ENABLE_PER_CLASS_CONFIDENCE,
+        enable_custom_nms=config_module.ENABLE_CUSTOM_NMS
     )
     return detector
 

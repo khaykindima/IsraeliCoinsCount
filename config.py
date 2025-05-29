@@ -6,7 +6,7 @@ import cv2 # Import for font selection
 # Allow overriding the input directory via an environment variable for portability.
 # Fallback to the original hardcoded path if the env var is not set.
 INPUTS_DIR_ENV = os.getenv("YOLO_COINS_INPUT_DIR")
-INPUTS_DIR = Path(INPUTS_DIR_ENV) if INPUTS_DIR_ENV else Path("/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v48i.yolov5pytorch")
+INPUTS_DIR = Path(INPUTS_DIR_ENV) if INPUTS_DIR_ENV else Path("/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v51i.yolov5pytorch")
     # Example expected structure for INPUTS_DIR:
     # INPUTS_DIR/
     #  ├── data.yaml (ORIGINAL_DATA_YAML_NAME)
@@ -76,19 +76,34 @@ AUGMENTATION_PARAMS = {
 }
 
 # --- Prediction & Evaluation Settings ---
-# For custom NMS in detector.py and evaluate_model.py
-IOU_SUPPRESSION_THRESHOLD = 0.4
 # For matching predictions to GT to determine TP/FP in evaluate_model.py
 BOX_MATCHING_IOU_THRESHOLD = 0.5
+# For custom NMS in detector.py and evaluate_model.py
+ENABLE_CUSTOM_NMS = False            # Set to True to enable custom NMS, False to disable (no NMS after per-class confidence)
+IOU_SUPPRESSION_THRESHOLD = 0.4
 # Default confidence threshold for classes not in PER_CLASS_CONF_THRESHOLDS and For initial model.predict() call to get raw boxes before per-class filtering
 DEFAULT_CONF_THRESHOLD = 0.25
 # Per-class confidence thresholds (class names should be lowercase)
+ENABLE_PER_CLASS_CONFIDENCE = False  # Set to True to use per-class thresholds, False to use only DEFAULT_CONF_THRESHOLD for all classes
 PER_CLASS_CONF_THRESHOLDS = {
-    "one": 0.35,
-    "two": 0.45,
-    "five": 0.35,
+    "one": 0.5,
+    "two": 0.5,
+    "five": 0.5,
     "ten": 0.8,
 }
+# --- Aspect Ratio Filtering ---
+ENABLE_ASPECT_RATIO_FILTER = False  # Set to True to enable, False to disable
+# Filters out boxes where the ratio of the longer side to the shorter side exceeds this threshold.
+# For example, a threshold of 2.5 means boxes where one side is more than 2.5x the other will be removed.
+# A perfect square has a ratio of 1.0.
+ASPECT_RATIO_FILTER_THRESHOLD = 2.1
+
+# --- Metrics Calculation Methodology ---
+# Defines the method used to calculate TP/FP/FN and derived metrics.
+# Options: "custom" (uses bbox_utils.match_predictions)
+#          "ultralytics" (uses DetectionMetricsCalculator with Ultralytics' ConfusionMatrix)
+METRICS_CALCULATION_METHOD_BEFORE = "custom"
+METRICS_CALCULATION_METHOD_AFTER = "ultralytics" # This maintains current default behavior for "After"
 
 # --- Drawing Configuration ---
 # Colors are in BGR format

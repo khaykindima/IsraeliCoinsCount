@@ -12,6 +12,25 @@ def calculate_iou(box1_xyxy, box2_xyxy):
     union_area = box1_area + box2_area - intersection_area
     return intersection_area / union_area if union_area > 0 else 0.0
 
+def calculate_aspect_ratio(xyxy):
+    """
+    Calculates the aspect ratio of a bounding box (longer side / shorter side).
+
+    Args:
+        xyxy (list or tuple): Bounding box coordinates [x1, y1, x2, y2].
+
+    Returns:
+        float: The aspect ratio, or 0.0 if width or height is zero.
+    """
+    x1, y1, x2, y2 = xyxy
+    width = float(x2 - x1)
+    height = float(y2 - y1)
+
+    if width <= 0 or height <= 0:
+        return 0.0  # Or None, or handle as an error
+    
+    return max(width / height, height / width)
+
 
 def match_predictions(predictions, ground_truths, iou_threshold, class_names_map):
     """
@@ -66,6 +85,7 @@ def match_predictions(predictions, ground_truths, iou_threshold, class_names_map
         if max_iou >= iou_threshold:
             stats[class_name]['TP'] += 1
             gt_matched_flags[best_match_gt_idx] = True  # Mark this GT as used
+            pred['matched_gt_xyxy'] = ground_truths[best_match_gt_idx]['xyxy'] 
             tp_details.append(pred)
         else:
             stats[class_name]['FP'] += 1
