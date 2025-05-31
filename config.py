@@ -40,12 +40,12 @@ CONFUSION_MATRIX_PLOT_NAME = "confusion_matrix.png" # Filename for the saved plo
 # MODEL_NAME_FOR_TRAINING can be a base model like "yolov8n.pt" to start fresh,
 # or a path to a .pt file to resume training or use as a base.
 # MODEL_NAME_FOR_TRAINING = "yolov8n_best.pt" # You can change this to other YOLOv11 variants like 'yolov11s.pt' etc.
-MODEL_NAME_FOR_TRAINING = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/yolo_experiment_output/training_runs/yolov8n_best_custom2/weights/best.pt"
+MODEL_NAME_FOR_TRAINING = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/BestResults/yolov8n_best_custom2/weights/yolov8n_v2.pt"
 # MODEL_PATH_FOR_PREDICTION should be the path to your trained model (e.g., best.pt from a training run)
 # This will be used by evaluate_model.py and run_inference.py
 # Example: MODEL_PATH_FOR_PREDICTION = OUTPUT_DIR / "training_runs" / "yolov8n_custom_training" / "weights" / "best.pt"
 # MODEL_PATH_FOR_PREDICTION = "yolov8n_best.pt" # Placeholder - update this to your actual best model path
-MODEL_PATH_FOR_PREDICTION = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/yolo_experiment_output/training_runs/yolov8n_best_custom2/weights/best.pt"
+MODEL_PATH_FOR_PREDICTION = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/BestResults/yolov8n_best_custom2/weights/yolov8n_v2.pt"
 
 # --- Training Parameters ---
 EPOCHS = 0 # Set to >0 for training, 0 for prediction/evaluation only using MODEL_PATH_FOR_PREDICTION
@@ -79,12 +79,12 @@ AUGMENTATION_PARAMS = {
 # For matching predictions to GT to determine TP/FP in evaluate_model.py
 BOX_MATCHING_IOU_THRESHOLD = 0.5
 # For custom NMS in detector.py and evaluate_model.py
-ENABLE_CUSTOM_NMS = False            # Set to True to enable custom NMS, False to disable (no NMS after per-class confidence)
+ENABLE_CUSTOM_NMS = True            # Set to True to enable custom NMS, False to disable (no NMS after per-class confidence)
 IOU_SUPPRESSION_THRESHOLD = 0.4
 # Default confidence threshold for classes not in PER_CLASS_CONF_THRESHOLDS and For initial model.predict() call to get raw boxes before per-class filtering
 DEFAULT_CONF_THRESHOLD = 0.25
 # Per-class confidence thresholds (class names should be lowercase)
-ENABLE_PER_CLASS_CONFIDENCE = False  # Set to True to use per-class thresholds, False to use only DEFAULT_CONF_THRESHOLD for all classes
+ENABLE_PER_CLASS_CONFIDENCE = True  # Set to True to use per-class thresholds, False to use only DEFAULT_CONF_THRESHOLD for all classes
 PER_CLASS_CONF_THRESHOLDS = {
     "one": 0.5,
     "two": 0.5,
@@ -92,7 +92,7 @@ PER_CLASS_CONF_THRESHOLDS = {
     "ten": 0.8,
 }
 # --- Aspect Ratio Filtering ---
-ENABLE_ASPECT_RATIO_FILTER = False  # Set to True to enable, False to disable
+ENABLE_ASPECT_RATIO_FILTER = True  # Set to True to enable, False to disable
 # Filters out boxes where the ratio of the longer side to the shorter side exceeds this threshold.
 # For example, a threshold of 2.5 means boxes where one side is more than 2.5x the other will be removed.
 # A perfect square has a ratio of 1.0.
