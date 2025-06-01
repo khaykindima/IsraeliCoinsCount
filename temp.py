@@ -1,134 +1,213 @@
-# metrics_calculator.py
-import logging
-import torch
+from ultralytics import YOLO
+import cv2
 from pathlib import Path
-from ultralytics.utils import metrics as ultralytics_metrics
-from utils import plot_readable_confusion_matrix, calculate_prf1
-import numpy as np
+from bbox_utils import calculate_iou, calculate_aspect_ratio 
+import logging # Assuming logger might be useful inside the filter
 
-class DetectionMetricsCalculator:
-    def __init__(self, class_names_map, logger=None, config_module=None):
+class CoinDetector:
+    def __init__(self, model_path, class_names_map,
+                 per_class_conf_thresholds=None,
+                 default_conf_thresh=0.25,
+                 iou_suppression_threshold=0.4,
+                 box_color_map=None, default_box_color=(255,0,0),
+                 box_thickness=2, text_thickness=2, font_face=cv2.FONT_HERSHEY_SIMPLEX, font_scale=1.0,
+                 enable_aspect_ratio_filter=False, aspect_ratio_filter_threshold=2.5,
+                 enable_per_class_confidence=True,
+                 enable_custom_nms=True
+                 ):
+        """Initializes the CoinDetector."""
+        self.model_path = Path(model_path)
+        self.model = YOLO(self.model_path)
         self.class_names_map = class_names_map
-        self.num_classes = len(class_names_map)
-        self.logger = logger if logger else logging.getLogger(__name__)
-        self.config = config_module
-        
-        iou_threshold_for_cm = 0.45 
-        if self.config and hasattr(self.config, 'BOX_MATCHING_IOU_THRESHOLD'):
-            iou_threshold_for_cm = self.config.BOX_MATCHING_IOU_THRESHOLD
-            self.logger.info(f"Using BOX_MATCHING_IOU_THRESHOLD: {iou_threshold_for_cm} for Ultralytics ConfusionMatrix.")
-        else:
-            self.logger.warning(
-                f"BOX_MATCHING_IOU_THRESHOLD not found in config. Using default IoU {iou_threshold_for_cm} for Ultralytics ConfusionMatrix."
-            )
-
-        self.ultralytics_cm = ultralytics_metrics.ConfusionMatrix(
-            nc=self.num_classes, 
-            iou_thres=iou_threshold_for_cm 
-        )
-        self.logger.info(f"MetricsCalculator initialized for {self.num_classes} classes. Ultralytics CM is ready with IoU threshold: {iou_threshold_for_cm}.")
-
-    def update_confusion_matrix(self, predictions_for_image, ground_truths_for_image):
-        if not self.ultralytics_cm:
-            self.logger.warning("Ultralytics CM not initialized, skipping CM update.")
-            return
-
-        if predictions_for_image:
-            preds_list = [[*p['xyxy'], p['conf'], float(p['cls'])] for p in predictions_for_image]
-            preds_tensor = torch.tensor(preds_list, dtype=torch.float32)
-        else:
-            preds_tensor = torch.empty((0, 6), dtype=torch.float32)
-
-        if ground_truths_for_image:
-            gt_bboxes_list = [gt['xyxy'] for gt in ground_truths_for_image]
-            gt_cls_list = [float(gt['cls']) for gt in ground_truths_for_image]
-            gt_bboxes_tensor = torch.tensor(gt_bboxes_list, dtype=torch.float32)
-            gt_cls_tensor = torch.tensor(gt_cls_list, dtype=torch.float32)
-        else:
-            gt_bboxes_tensor = torch.empty((0, 4), dtype=torch.float32)
-            gt_cls_tensor = torch.empty((0,), dtype=torch.float32)
-        
-        self.ultralytics_cm.process_batch(preds_tensor, gt_bboxes_tensor, gt_cls_tensor)
-
-    # MODIFIED: Added plot_suffix parameter with a default value
-    def compute_metrics(self, eval_output_dir: Path = None, plot_suffix: str = ""):
-        results = {'per_class': {}, 'overall': {}, 'confusion_matrix_data': None, 'confusion_matrix_plot_path_info': None}
-        
-        matrix = self.ultralytics_cm.matrix
-        if matrix is None:
-            self.logger.error("Cannot compute metrics: Confusion Matrix has not been populated.")
-            return results
-        
-        # Using the suffix in the log message if provided
-        log_suffix_msg = f" ({plot_suffix.replace('_', ' ').strip()})" if plot_suffix else ""
-        self.logger.info(f"Computing metrics from Ultralytics CM matrix{log_suffix_msg}.")
+        self.per_class_conf_thresholds = per_class_conf_thresholds or {}
+        self.default_conf_thresh = default_conf_thresh
+        self.iou_suppression_threshold = iou_suppression_threshold
+        # Store drawing parameters
+        self.box_color_map = box_color_map or {}
+        self.default_box_color = default_box_color
+        self.box_thickness = box_thickness
+        self.text_thickness = text_thickness
+        self.font_face = font_face
+        self.font_scale = font_scale
+        self.enable_aspect_ratio_filter = enable_aspect_ratio_filter
+        self.aspect_ratio_filter_threshold = aspect_ratio_filter_threshold
+        self.enable_per_class_confidence = enable_per_class_confidence
+        self.enable_custom_nms = enable_custom_nms
+        self.logger = logging.getLogger(__name__) 
 
 
-        total_tp, total_fp, total_fn, total_gt = 0, 0, 0, 0
+    def _apply_per_class_confidence(self, raw_predictions_data):
+        """
+        Applies per-class confidence thresholds if enabled.
+        If enabled and a class is not in per_class_conf_thresholds, it raises an error.
+        If disabled, this method is skipped, and initial model.predict thresholding is used.
+        """
+        if not self.enable_per_class_confidence: #
+            self.logger.info("Per-class confidence thresholding is disabled. Skipping this step.") #
+            return raw_predictions_data # Pass through data if feature is disabled
 
-        for i in range(self.num_classes):
-            class_name = self.class_names_map.get(i, f"Unknown_ID_{i}")
+        thresholded_predictions = []
+        self.logger.info("Applying per-class confidence thresholds.") #
+        for pred_item in raw_predictions_data: #
+            class_name = self.class_names_map.get(pred_item['cls'], f"Unnamed_ID_{pred_item['cls']}").lower().strip() #
             
-            tp = matrix[i, i]
-            fp = matrix[i, :].sum() - tp 
-            fn = matrix[:, i].sum() - tp
-            gt_count = tp + fn
-
-            class_metrics_set = calculate_prf1(tp, fp, fn)
-            results['per_class'][class_name] = {
-                'TP': int(tp), 
-                'FP': int(fp), 
-                'FN': int(fn), 
-                'GT_count': int(gt_count),
-                'precision': class_metrics_set['precision'],
-                'recall': class_metrics_set['recall'],
-                'f1_score': class_metrics_set['f1_score']
-            }
+            if class_name not in self.per_class_conf_thresholds: #
+                raise KeyError( #
+                    f"Confidence threshold not defined for class '{class_name}' (ID: {pred_item['cls']}) " #
+                    f"in PER_CLASS_CONF_THRESHOLDS (config.py), but per-class confidence is enabled." #
+                )
+            conf_thresh_to_apply = self.per_class_conf_thresholds[class_name] #
             
-            total_tp += tp
-            total_fp += fp
-            total_fn += fn
-            total_gt += gt_count
-
-        overall_metrics = calculate_prf1(total_tp, total_fp, total_fn)
-        results['overall'] = {
-            'TP': int(total_tp), 
-            'FP': int(total_fp), 
-            'FN': int(total_fn), 
-            'GT_count': int(total_gt),
-            'precision_micro': overall_metrics['precision'],
-            'recall_micro': overall_metrics['recall'],
-            'f1_score_micro': overall_metrics['f1_score']
-        }
-
-        self.logger.info(f"Raw Confusion Matrix data{log_suffix_msg}:\n{matrix}")
-        results['confusion_matrix_data'] = matrix.tolist()
+            if pred_item['conf'] >= conf_thresh_to_apply: #
+                thresholded_predictions.append(pred_item) #
         
-        # MODIFIED: Plot saving logic to incorporate plot_suffix
-        if eval_output_dir and self.config and hasattr(self.config, 'CONFUSION_MATRIX_PLOT_NAME'):
-            base_plot_name = Path(self.config.CONFUSION_MATRIX_PLOT_NAME)
-            # Ensure plot_suffix, if provided, results in a clean modification (e.g., _before_processing)
-            # The suffix should typically start with an underscore if it's meant to be a suffix.
-            final_plot_filename = f"{base_plot_name.stem}{plot_suffix}{base_plot_name.suffix}"
-            plot_path = eval_output_dir / final_plot_filename
-            
-            sorted_class_names = [self.class_names_map[i] for i in sorted(self.class_names_map.keys())]
-            
-            title_suffix_str = plot_suffix.replace("_", " ").strip().title()
-            plot_title = f'Confusion Matrix {title_suffix_str}'.strip()
-            if not title_suffix_str: # Default title if suffix is empty
-                plot_title = 'Confusion Matrix (After Post-Processing)'
+        original_count = len(raw_predictions_data) #
+        retained_count = len(thresholded_predictions) #
+        if original_count > 0 : #
+            self.logger.info(f"Per-class confidence filtering: Retained {retained_count}/{original_count} predictions.") #
+        
+        return thresholded_predictions
 
+    def _apply_aspect_ratio_filter(self, predictions_data):
+        """Filters predictions based on bounding box aspect ratio."""
+        if not self.enable_aspect_ratio_filter:
+            return predictions_data
 
-            plot_readable_confusion_matrix(
-                matrix_data=matrix,
-                class_names=sorted_class_names,
-                output_path=plot_path,
-                title=plot_title
-            )
-            results['confusion_matrix_plot_path_info'] = f"Plot saved to {plot_path}"
+        filtered_predictions = []
+        for pred in predictions_data:
+            aspect_ratio = calculate_aspect_ratio(pred['xyxy']) #
+
+            if aspect_ratio == 0.0: # 
+                self.logger.debug(f"Skipping degenerate box (xyxy: {pred['xyxy']}) before aspect ratio check.") #
+                continue
+
+            if aspect_ratio <= self.aspect_ratio_filter_threshold: #
+                filtered_predictions.append(pred)
+            else:
+                self.logger.debug(
+                    f"Filtered out box due to aspect ratio: {aspect_ratio:.2f} "
+                    f"(Threshold: {self.aspect_ratio_filter_threshold}). Box: {pred['xyxy']}"
+                )
+        
+        original_count = len(predictions_data)
+        filtered_count = len(filtered_predictions)
+        if original_count > filtered_count:
+             self.logger.info(f"Aspect ratio filter: Retained {filtered_count}/{original_count} predictions.")
+        
+        return filtered_predictions
+
+    def _apply_custom_nms(self, predictions_data):
+        """Applies custom inter-class Non-Maximum Suppression if enabled."""
+        if not self.enable_custom_nms: # Check if custom NMS is enabled
+            self.logger.info("Custom NMS is disabled. Skipping NMS.") #
+            return predictions_data
+        if not predictions_data:
+            return []
+        
+        num_preds = len(predictions_data)
+        suppressed_flags = [False] * num_preds
+        
+        # Sort by confidence to give higher confidence boxes priority
+        # This helps in a greedy NMS approach where a higher confidence box suppresses a lower one
+        sorted_indices = sorted(range(num_preds), key=lambda k: predictions_data[k]['conf'], reverse=True)
+
+        for i_idx_in_sorted in range(num_preds):
+            i = sorted_indices[i_idx_in_sorted] # Actual index in predictions_data
+            if suppressed_flags[i]:
+                continue
+            for j_idx_in_sorted in range(i_idx_in_sorted + 1, num_preds):
+                j = sorted_indices[j_idx_in_sorted] # Actual index in predictions_data
+                if suppressed_flags[j]:
+                    continue
+                
+                iou = calculate_iou(predictions_data[i]['xyxy'], predictions_data[j]['xyxy']) 
+                
+                if iou > self.iou_suppression_threshold:
+                    # Since predictions_data[i] has higher or equal confidence (due to sorting),
+                    # suppress predictions_data[j]
+                    suppressed_flags[j] = True 
+            
+        final_predictions = [p for idx, p in enumerate(predictions_data) if not suppressed_flags[idx]]
+        original_count = len(predictions_data) #
+        filtered_count = len(final_predictions) #
+        if original_count > filtered_count: #
+            self.logger.info(f"Custom NMS: Retained {filtered_count}/{original_count} predictions.") #
+            
+        return final_predictions
+
+    def _apply_postprocessing_pipeline(self, raw_predictions_data):
+        """
+        Applies the full custom post-processing pipeline to raw predictions.
+        """
+        self.logger.info("Starting custom post-processing pipeline...")
+        
+        # Apply confidence filtering (per-class or default)
+        processed_after_confidence = self._apply_per_class_confidence(raw_predictions_data) #
+        
+        # Apply aspect ratio filter (if enabled)
+        processed_after_aspect_ratio = self._apply_aspect_ratio_filter(processed_after_confidence) #
+
+        # Apply NMS (if enabled)
+        processed_after_nms = self._apply_custom_nms(processed_after_aspect_ratio) #
+        
+        self.logger.info("Custom post-processing pipeline finished.")
+        return processed_after_nms
+
+    def predict(self, image_np_or_path, return_raw=False):
+        """
+        Performs prediction on an image with custom post-processing.
+        Args:
+            image_np_or_path (np.ndarray or str or Path): Image as NumPy array or path to image file.
+            return_raw (bool): If True, returns both final and raw predictions.
+        Returns:
+            list or tuple: A list of final predictions, or a tuple of 
+                           (final_predictions, raw_predictions) if return_raw is True.
+        """
+        raw_predictions_data = []
+        # The model.predict source can be a NumPy array, path, URL, etc.
+        # The 'conf' parameter here acts as an initial filter by the YOLO model itself.
+        # Our subsequent filters refine this further.
+        pred_results_list = self.model.predict(source=image_np_or_path, 
+                                               save=False, 
+                                               verbose=False, 
+                                               conf=self.default_conf_thresh)
+
+        if pred_results_list and pred_results_list[0].boxes:
+            r_boxes = pred_results_list[0].boxes
+            for i in range(len(r_boxes)):
+                raw_predictions_data.append({
+                    'xyxy': r_boxes.xyxy[i].cpu().tolist(), # [x1, y1, x2, y2]
+                    'conf': float(r_boxes.conf[i]),
+                    'cls': int(r_boxes.cls[i])
+                })
+        
+        # Apply the consolidated post-processing pipeline
+        final_predictions = self._apply_postprocessing_pipeline(raw_predictions_data)
+        
+        # Add class names to the final predictions
+        for pred in final_predictions:
+            pred['class_name'] = self.class_names_map.get(pred['cls'], f"ID_{pred['cls']}")
+        
+        if return_raw:
+            # 'raw_predictions_data' here refers to predictions after initial model.predict filtering
+            # but before any of the CoinDetector's custom post-processing.
+            return final_predictions, raw_predictions_data 
         else:
-            results['confusion_matrix_plot_path_info'] = "Plot not saved: Output dir or plot name config missing."
-        
-        self.logger.info(f"Metrics computation complete{log_suffix_msg}.")
-        return results
+            return final_predictions 
+
+    def draw_predictions_on_image(self, image_np, predictions_list):
+        """Draws final predictions on an image using configured settings."""
+        img_to_draw_on = image_np.copy()
+        for pred_data in predictions_list:
+            x1, y1, x2, y2 = map(int, pred_data['xyxy'])
+            class_name = pred_data['class_name']
+            label = f"{class_name} {pred_data['conf']:.2f}"
+            color = self.box_color_map.get(class_name.lower().strip(), self.default_box_color)
+
+            # MODIFIED: Use stored drawing parameters
+            cv2.rectangle(img_to_draw_on, (x1, y1), (x2, y2), color, self.box_thickness)
+            (text_w, text_h), _ = cv2.getTextSize(label, self.font_face, self.font_scale, self.text_thickness)
+            cv2.rectangle(img_to_draw_on, (x1, y1 - text_h - 5), (x1 + text_w, y1), color, -1)
+            cv2.putText(img_to_draw_on, label, (x1, y1 - 5), self.font_face, self.font_scale, (0,0,0), self.text_thickness)
+            
+        return img_to_draw_on

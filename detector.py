@@ -135,6 +135,24 @@ class CoinDetector:
             
         return final_predictions
 
+    def _apply_postprocessing_pipeline(self, raw_predictions_data):
+        """
+        Applies the full custom post-processing pipeline to raw predictions.
+        """
+        self.logger.info("Starting custom post-processing pipeline...")
+        
+        # Apply confidence filtering (per-class or default)
+        processed_after_confidence = self._apply_per_class_confidence(raw_predictions_data) #
+        
+        # Apply aspect ratio filter (if enabled)
+        processed_after_aspect_ratio = self._apply_aspect_ratio_filter(processed_after_confidence) #
+
+        # Apply NMS (if enabled)
+        processed_after_nms = self._apply_custom_nms(processed_after_aspect_ratio) #
+        
+        self.logger.info("Custom post-processing pipeline finished.")
+        return processed_after_nms
+
     def predict(self, image_np_or_path, return_raw=False):
         """
         Performs prediction on an image with custom post-processing.
@@ -163,13 +181,9 @@ class CoinDetector:
                     'cls': int(r_boxes.cls[i])
                 })
         
-        # Apply confidence filtering (per-class or default)
-        processed_after_confidence = self._apply_per_class_confidence(raw_predictions_data)
-        # Apply aspect ratio filter (if enabled)
-        processed_after_aspect_ratio = self._apply_aspect_ratio_filter(processed_after_confidence)
-
-        # Apply NMS (if enabled)
-        final_predictions = self._apply_custom_nms(processed_after_aspect_ratio)
+        # Apply the consolidated post-processing pipeline
+        final_predictions = self._apply_postprocessing_pipeline(raw_predictions_data)
+        
         # Add class names to the final predictions
         for pred in final_predictions:
             pred['class_name'] = self.class_names_map.get(pred['cls'], f"ID_{pred['cls']}")
