@@ -6,7 +6,7 @@ import cv2 # Import for font selection
 # Allow overriding the input directory via an environment variable for portability.
 # Fallback to the original hardcoded path if the env var is not set.
 INPUTS_DIR_ENV = os.getenv("YOLO_COINS_INPUT_DIR")
-INPUTS_DIR = Path(INPUTS_DIR_ENV) if INPUTS_DIR_ENV else Path("/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v51i.yolov5pytorch")
+INPUTS_DIR = Path(INPUTS_DIR_ENV) if INPUTS_DIR_ENV else Path("/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v52i.yolov5pytorch")
     # Example expected structure for INPUTS_DIR:
     # INPUTS_DIR/
     #  ├── data.yaml (ORIGINAL_DATA_YAML_NAME)
@@ -58,6 +58,9 @@ TRAINING_LRF = 1.00 # Final OneCycleLR learning rate (lr0 * lrf)
 TRAIN_RATIO = 0.7
 VAL_RATIO = 0.15
 TEST_RATIO = 0.15
+
+# --- Image Preprocessing ---
+ENABLE_GRAYSCALE_PREPROCESSING = False # Set to False to use original color images
 
 # --- Augmentation Parameters ---
 AUGMENTATION_PARAMS = {

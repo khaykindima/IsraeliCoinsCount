@@ -9,8 +9,95 @@ import numpy as np # For drawing
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-from detector import CoinDetector
 
+
+# Factory function for creating a detector 
+def create_detector_from_config(model_path, class_map, config_module, logger):
+    """
+    Creates a fully configured CoinDetector instance from config.
+    Args:
+        model_path (str or Path): Path to the model file. Will be converted to Path if str.
+        class_map (dict): Mapping of class IDs to class names.
+        config_module (module): The configuration module.
+        logger (logging.Logger): Logger instance.
+    Returns:
+        CoinDetector: Configured instance of the detector.
+    """
+	
+    from detector import CoinDetector
+	
+    # Ensure model_path is a Path object before passing to CoinDetector
+    model_path_obj = Path(model_path)
+    logger.info(f"Creating detector instance with model: {model_path_obj}")
+    
+    detector = CoinDetector(
+        model_path=model_path_obj, # Pass the Path object
+        class_names_map=class_map,
+        per_class_conf_thresholds=config_module.PER_CLASS_CONF_THRESHOLDS,
+        default_conf_thresh=config_module.DEFAULT_CONF_THRESHOLD,
+        iou_suppression_threshold=config_module.IOU_SUPPRESSION_THRESHOLD,
+        box_color_map=config_module.BOX_COLOR_MAP,
+        default_box_color=config_module.DEFAULT_BOX_COLOR,
+        box_thickness=config_module.BOX_THICKNESS,
+        text_thickness=config_module.TEXT_THICKNESS,
+        font_face=config_module.FONT_FACE,
+        font_scale=config_module.INFERENCE_FONT_SCALE,
+        enable_aspect_ratio_filter=config_module.ENABLE_ASPECT_RATIO_FILTER,
+        aspect_ratio_filter_threshold=config_module.ASPECT_RATIO_FILTER_THRESHOLD,
+        enable_per_class_confidence=config_module.ENABLE_PER_CLASS_CONFIDENCE,
+        enable_custom_nms=config_module.ENABLE_CUSTOM_NMS,
+        enable_grayscale_preprocessing_from_config=config_module.ENABLE_GRAYSCALE_PREPROCESSING
+    
+    )
+    return detector
+
+def convert_to_3channel_grayscale(image_np_or_path, logger_instance=None):
+    """
+    Loads an image if a path is given, converts it to grayscale,
+    and then converts the grayscale image to a 3-channel BGR format.
+    """
+    log = logger_instance if logger_instance else logging.getLogger(__name__)
+
+    log.debug(f"Starting image preprocessing for input: {type(image_np_or_path)}")
+    image_np = None
+    if isinstance(image_np_or_path, (str, Path)):
+        if not Path(image_np_or_path).exists():
+            log.error(f"Image path does not exist: {image_np_or_path}")
+            return None
+        image_np = cv2.imread(str(image_np_or_path))
+        if image_np is None:
+            log.error(f"Failed to load image from path: {image_np_or_path}")
+            return None
+        log.debug(f"Successfully loaded image from path: {image_np_or_path}")
+    elif isinstance(image_np_or_path, np.ndarray):
+        image_np = image_np_or_path.copy() 
+        log.debug("Processing image from NumPy array.")
+    else:
+        log.error(f"Invalid image input type: {type(image_np_or_path)}")
+        return None
+
+    if image_np.size == 0:
+        log.error("Input image array is empty.")
+        return None
+
+    if image_np.ndim == 2 or (image_np.ndim == 3 and image_np.shape[2] == 1):
+        log.debug("Image appears to be already grayscale or has only one channel.")
+        gray_image_np = image_np if image_np.ndim == 2 else image_np[:,:,0]
+    elif image_np.ndim == 3 and image_np.shape[2] == 3: 
+        gray_image_np = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
+        log.debug("Converted BGR image to grayscale.")
+    elif image_np.ndim == 3 and image_np.shape[2] == 4: 
+        log.debug("Input image has 4 channels (e.g., BGRA). Converting to BGR first.")
+        bgr_image_np = cv2.cvtColor(image_np, cv2.COLOR_BGRA2BGR)
+        gray_image_np = cv2.cvtColor(bgr_image_np, cv2.COLOR_BGR2GRAY)
+        log.debug("Converted 4-channel image to grayscale.")
+    else:
+        log.error(f"Unsupported image format/dimensions: {image_np.shape}")
+        return None
+            
+    image_for_model = cv2.cvtColor(gray_image_np, cv2.COLOR_GRAY2BGR)
+    log.debug("Converted grayscale image to 3-channel BGR for model input. Preprocessing finished.")
+    return image_for_model
 
 def draw_ground_truth_boxes(image_np, ground_truths_list, class_names_map, config_module):
     """
@@ -58,41 +145,6 @@ def save_config_to_run_dir(run_dir_path, logger):
     except Exception as e:
         logger.error(f"Could not save config.py to run directory: {e}")
 
-
-# Factory function for creating a detector 
-def create_detector_from_config(model_path, class_map, config_module, logger):
-    """
-    Creates a fully configured CoinDetector instance from config.
-    Args:
-        model_path (str or Path): Path to the model file. Will be converted to Path if str.
-        class_map (dict): Mapping of class IDs to class names.
-        config_module (module): The configuration module.
-        logger (logging.Logger): Logger instance.
-    Returns:
-        CoinDetector: Configured instance of the detector.
-    """
-    # Ensure model_path is a Path object before passing to CoinDetector
-    model_path_obj = Path(model_path)
-    logger.info(f"Creating detector instance with model: {model_path_obj}")
-    
-    detector = CoinDetector(
-        model_path=model_path_obj, # Pass the Path object
-        class_names_map=class_map,
-        per_class_conf_thresholds=config_module.PER_CLASS_CONF_THRESHOLDS,
-        default_conf_thresh=config_module.DEFAULT_CONF_THRESHOLD,
-        iou_suppression_threshold=config_module.IOU_SUPPRESSION_THRESHOLD,
-        box_color_map=config_module.BOX_COLOR_MAP,
-        default_box_color=config_module.DEFAULT_BOX_COLOR,
-        box_thickness=config_module.BOX_THICKNESS,
-        text_thickness=config_module.TEXT_THICKNESS,
-        font_face=config_module.FONT_FACE,
-        font_scale=config_module.INFERENCE_FONT_SCALE,
-        enable_aspect_ratio_filter=config_module.ENABLE_ASPECT_RATIO_FILTER,
-        aspect_ratio_filter_threshold=config_module.ASPECT_RATIO_FILTER_THRESHOLD,
-        enable_per_class_confidence=config_module.ENABLE_PER_CLASS_CONFIDENCE,
-        enable_custom_nms=config_module.ENABLE_CUSTOM_NMS
-    )
-    return detector
 
 # --- Logger Setup ---
 LOG_FORMATTER = logging.Formatter('%(asctime)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s')

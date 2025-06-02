@@ -3,6 +3,7 @@ import cv2
 from pathlib import Path
 from bbox_utils import calculate_iou, calculate_aspect_ratio 
 import logging # Assuming logger might be useful inside the filter
+from utils import convert_to_3channel_grayscale 
 
 class CoinDetector:
     def __init__(self, model_path, class_names_map,
@@ -13,7 +14,8 @@ class CoinDetector:
                  box_thickness=2, text_thickness=2, font_face=cv2.FONT_HERSHEY_SIMPLEX, font_scale=1.0,
                  enable_aspect_ratio_filter=False, aspect_ratio_filter_threshold=2.5,
                  enable_per_class_confidence=True,
-                 enable_custom_nms=True
+                 enable_custom_nms=True,
+                 enable_grayscale_preprocessing_from_config=False # Default to True if not passed, or could raise error
                  ):
         """Initializes the CoinDetector."""
         self.model_path = Path(model_path)
@@ -34,7 +36,7 @@ class CoinDetector:
         self.enable_per_class_confidence = enable_per_class_confidence
         self.enable_custom_nms = enable_custom_nms
         self.logger = logging.getLogger(__name__) 
-
+        self.enable_grayscale_preprocessing = enable_grayscale_preprocessing_from_config
 
     def _apply_per_class_confidence(self, raw_predictions_data):
         """
@@ -155,7 +157,7 @@ class CoinDetector:
 
     def predict(self, image_np_or_path, return_raw=False):
         """
-        Performs prediction on an image with custom post-processing.
+        Performs prediction on an image with custom pre and post-processing.
         Args:
             image_np_or_path (np.ndarray or str or Path): Image as NumPy array or path to image file.
             return_raw (bool): If True, returns both final and raw predictions.
@@ -163,25 +165,37 @@ class CoinDetector:
             list or tuple: A list of final predictions, or a tuple of 
                            (final_predictions, raw_predictions) if return_raw is True.
         """
-        raw_predictions_data = []
-        # The model.predict source can be a NumPy array, path, URL, etc.
-        # The 'conf' parameter here acts as an initial filter by the YOLO model itself.
-        # Our subsequent filters refine this further.
-        pred_results_list = self.model.predict(source=image_np_or_path, 
-                                               save=False, 
-                                               verbose=False, 
-                                               conf=self.default_conf_thresh)
+        # --- Image Preprocessing ---
+        
+        if self.enable_grayscale_preprocessing:
+            self.logger.info("Grayscale preprocessing is ENABLED. Converting image to 3-channel grayscale.")
+            # The convert_to_3channel_grayscale function from utils.py expects a NumPy array
+            preprocessed_image_np = convert_to_3channel_grayscale(image_np_or_path, logger_instance=self.logger)
+            if preprocessed_image_np is None:
+                self.logger.error("Image preprocessing failed. Cannot proceed with prediction.")
+                return ([], []) if return_raw else []
+        else:
+            preprocessed_image_np = image_np_or_path
 
+
+        # Model Prediction
+
+        pred_results_list = self.model.predict(source=preprocessed_image_np, 
+                                            save=False, 
+                                                verbose=False,
+                                            conf=self.default_conf_thresh)
+       
+        raw_predictions_data = []
         if pred_results_list and pred_results_list[0].boxes:
             r_boxes = pred_results_list[0].boxes
             for i in range(len(r_boxes)):
                 raw_predictions_data.append({
-                    'xyxy': r_boxes.xyxy[i].cpu().tolist(), # [x1, y1, x2, y2]
+                    'xyxy': r_boxes.xyxy[i].cpu().tolist(), 
                     'conf': float(r_boxes.conf[i]),
                     'cls': int(r_boxes.cls[i])
                 })
         
-        # Apply the consolidated post-processing pipeline
+        # --- Custom Post-processing ---
         final_predictions = self._apply_postprocessing_pipeline(raw_predictions_data)
         
         # Add class names to the final predictions
