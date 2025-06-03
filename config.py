@@ -40,7 +40,7 @@ MODEL_NAME_FOR_TRAINING = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltral
 MODEL_PATH_FOR_PREDICTION = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/BestResults/yolov8n_best_custom2/weights/yolov8n_v2.pt"
 
 # --- Training Parameters ---
-EPOCHS = 0 # Set to >0 for training, 0 for prediction/evaluation only using MODEL_PATH_FOR_PREDICTION
+EPOCHS = 0 # Set to >0 for training, 0 for prediction/evaluation only using prediction model
 IMG_SIZE = 640
 TRAINING_OPTIMIZER = 'Adam' # Default is 'SGD', or 'AdamW'
 TRAINING_LR0 = 0.0001 # Initial learning rate
