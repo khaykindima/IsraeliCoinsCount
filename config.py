@@ -37,14 +37,7 @@ METRICS_JSON_NAME = "final_evaluation_metrics.json" # Name for the metrics JSON 
 CONFUSION_MATRIX_PLOT_NAME = "confusion_matrix.png" # Filename for the saved plot
 
 # --- Model Configuration ---
-# MODEL_NAME_FOR_TRAINING can be a base model like "yolov8n.pt" to start fresh,
-# or a path to a .pt file to resume training or use as a base.
-# MODEL_NAME_FOR_TRAINING = "yolov8n_best.pt" # You can change this to other YOLOv11 variants like 'yolov11s.pt' etc.
 MODEL_NAME_FOR_TRAINING = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/BestResults/yolov8n_best_custom2/weights/yolov8n_v2.pt"
-# MODEL_PATH_FOR_PREDICTION should be the path to your trained model (e.g., best.pt from a training run)
-# This will be used by evaluate_model.py and run_inference.py
-# Example: MODEL_PATH_FOR_PREDICTION = OUTPUT_DIR / "training_runs" / "yolov8n_custom_training" / "weights" / "best.pt"
-# MODEL_PATH_FOR_PREDICTION = "yolov8n_best.pt" # Placeholder - update this to your actual best model path
 MODEL_PATH_FOR_PREDICTION = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/BestResults/yolov8n_best_custom2/weights/yolov8n_v2.pt"
 
 # --- Training Parameters ---
