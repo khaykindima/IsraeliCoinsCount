@@ -5,8 +5,7 @@ import cv2 # Import for font selection
 # --- Base Paths ---
 # Allow overriding the input directory via an environment variable for portability.
 # Fallback to the original hardcoded path if the env var is not set.
-INPUTS_DIR_ENV = os.getenv("YOLO_COINS_INPUT_DIR")
-INPUTS_DIR = Path(INPUTS_DIR_ENV) if INPUTS_DIR_ENV else Path("/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v52i.yolov5pytorch")
+INPUTS_DIR = Path("/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v52i.yolov5pytorch")
     # Example expected structure for INPUTS_DIR:
     # INPUTS_DIR/
     #  ├── data.yaml (ORIGINAL_DATA_YAML_NAME)
