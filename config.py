@@ -5,7 +5,7 @@ import cv2 # Import for font selection
 # --- Base Paths ---
 # Allow overriding the input directory via an environment variable for portability.
 # Fallback to the original hardcoded path if the env var is not set.
-INPUTS_DIR = Path("/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v52i.yolov5pytorch")
+INPUTS_DIR = Path("/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/Data/CoinCount.v53i.yolov5pytorch")
     # Example expected structure for INPUTS_DIR:
     # INPUTS_DIR/
     #  ├── data.yaml (ORIGINAL_DATA_YAML_NAME)
@@ -92,13 +92,6 @@ ENABLE_ASPECT_RATIO_FILTER = True  # Set to True to enable, False to disable
 # For example, a threshold of 2.5 means boxes where one side is more than 2.5x the other will be removed.
 # A perfect square has a ratio of 1.0.
 ASPECT_RATIO_FILTER_THRESHOLD = 2.1
-
-# --- Metrics Calculation Methodology ---
-# Defines the method used to calculate TP/FP/FN and derived metrics.
-# Options: "custom" (uses bbox_utils.match_predictions)
-#          "ultralytics" (uses DetectionMetricsCalculator with Ultralytics' ConfusionMatrix)
-METRICS_CALCULATION_METHOD_BEFORE = "custom"
-METRICS_CALCULATION_METHOD_AFTER = "ultralytics" # This maintains current default behavior for "After"
 
 # --- Drawing Configuration ---
 # Colors are in BGR format
