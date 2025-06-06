@@ -62,12 +62,12 @@ AUGMENTATION_PARAMS = {
     'degrees': 10.0,
     'translate': 0.1,
     'scale': 0.5,
-    'shear': 0.0,
-    'perspective': 0.0,
+    'shear': 10.0,
+    'perspective': 0.001,
     'flipud': 0.0,
     'fliplr': 0.0,
-    'mosaic': 1.0,
-    'mixup': 0.1,
+    'mosaic': 0.2,
+    'mixup': 0.0,
 }
 
 # --- Prediction & Evaluation Settings ---
