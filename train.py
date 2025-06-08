@@ -123,6 +123,7 @@ def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, lo
 		lr0=config.TRAINING_LR0, 
 		lrf=config.TRAINING_LRF,
         exist_ok=False, 
+        save_period=1, #-1 sets to default to save ony last.pt and best.pt
 		**config.AUGMENTATION_PARAMS)
         
     run_dir = Path(results.save_dir)
