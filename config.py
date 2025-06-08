@@ -37,7 +37,7 @@ CONFUSION_MATRIX_PLOT_NAME = "confusion_matrix.png" # Filename for the saved plo
 
 # --- Model Configuration ---
 MODEL_NAME_FOR_TRAINING = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/BestModels/yolov8n_v3.pt"
-MODEL_PATH_FOR_PREDICTION = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/BestModels/yolov8n_v3.pt"
+MODEL_PATH_FOR_PREDICTION = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/BestTrainingResults/yolov8n_v3_custom2/weights"
 
 # --- Training Parameters ---
 EPOCHS = 0 # Set to >0 for training, 0 for prediction/evaluation only using prediction model

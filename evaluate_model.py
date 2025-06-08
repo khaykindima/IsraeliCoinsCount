@@ -142,6 +142,18 @@ class YoloEvaluator:
             json.dump(final_metrics_ultralytics_cm, f, indent=4)
         self.logger.info(f"Saved final Ultralytics CM metrics dictionary to: {metrics_file_path}")
 
+        # Prepare the dictionary to be returned for the multi-model summary
+        overall_sac = {metric: sum(s.get(metric, 0) for s in aggregate_stats_after_custom.values()) for metric in ['TP', 'FP', 'FN']}
+        prf1_sac_overall = calculate_prf1(overall_sac['TP'], overall_sac['FP'], overall_sac['FN'])
+        overall_sac['Precision'] = prf1_sac_overall['precision']
+        overall_sac['Recall'] = prf1_sac_overall['recall']
+        overall_sac['F1-Score'] = prf1_sac_overall['f1_score']
+        overall_sac['Images with Errors'] = error_count_after
+
+        # Return the calculated overall stats for the "After Post-Process (Custom Match)"
+        return overall_sac
+
+
     def _log_console_summaries(self, total_images, class_names_map, 
                                stats_before_custom, stats_after_custom, 
                                per_class_stats_ucm, overall_stats_ucm,

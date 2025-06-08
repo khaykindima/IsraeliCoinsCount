@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 from ultralytics import YOLO
+import pandas as pd
 
 # Project-specific modules
 import config
@@ -16,6 +17,7 @@ from utils import (
 from evaluate_model import YoloEvaluator
 
 def main_train():
+    """Main entry point for the training and evaluation script."""
     config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     main_log_file = config.OUTPUT_DIR / f"{config.LOG_FILE_BASE_NAME}_train_or_direct_eval.log"
     logger = setup_logging(main_log_file, logger_name='yolo_main_script_logger')
@@ -61,36 +63,27 @@ def main_train():
         finalize_and_exit(logger, main_log_file, None, f"An unexpected error occurred: {e}", final_log_suffix)
 
 def load_or_derive_class_names(label_dirs, logger):
+    """Loads class names from YAML, falling back to deriving them from labels."""
     names_from_yaml = load_class_names_from_yaml(config.INPUTS_DIR / config.ORIGINAL_DATA_YAML_NAME, logger)
     if names_from_yaml is not None:
         return {i: str(name).strip() for i, name in enumerate(names_from_yaml)}, len(names_from_yaml)
 
     logger.warning("Falling back to deriving class names from labels.")
-    if not label_dirs:
-        return {}, 0
-
     unique_ids = get_unique_class_ids(label_dirs, logger)
-    if not unique_ids:
-        return {}, 0
-
     num_classes = max(unique_ids) + 1 if unique_ids else 0
     return {i: f"class_{i}" for i in range(num_classes)}, num_classes
 
-def finalize_and_exit(logger, main_log_file, run_dir, message, final_log_suffix):
-    logger.error(message)
-    copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}{final_log_suffix}", logger)
-    return
-
 def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, logger):
-    logger.info("--- Starting Training ---")
+    """Orchestrates the model training process."""
+    logger.info("--- Starting Training Workflow ---")
 
-    train_pairs, val_pairs, test_pairs = split_data(
-        image_label_pairs=pairs, 
-        train_ratio=config.TRAIN_RATIO, 
-        val_ratio=config.VAL_RATIO, 
-        test_ratio=config.TEST_RATIO, 
-        logger_instance=logger
-    )
+    # --- Data Splitting and YAML Creation ---
+    train_pairs, val_pairs, test_pairs = split_data(pairs, 
+	config.TRAIN_RATIO, 
+	config.VAL_RATIO, 
+	config.TEST_RATIO, logger
+	)
+	
     dataset_yaml_path = config.OUTPUT_DIR / config.DATASET_YAML_NAME
 
     create_yolo_dataset_yaml(
@@ -130,85 +123,124 @@ def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, lo
 	
     save_config_to_run_dir(run_dir, logger) 
 
+    # --- Post-Training Evaluation ---
     best_model_path = _find_best_model(model, run_dir, logger)
 
 
     if best_model_path:
         # --- OPTIMIZATION: Run standard validation on the test set post-training ---
-        logger.info(f"--- Starting Standard Ultralytics Validation on Test Set ---")
+        logger.info("--- Starting Standard Ultralytics Validation on Test Set ---")
         try:
-            # Re-initialize model with the best weights for validation
-            validation_model = YOLO(best_model_path)
-            validation_results = validation_model.val(
-                data=str(dataset_yaml_path),
-                split='test', # Use the test split defined in the YAML
-                project=str(run_dir),
-                name="standard_test_validation",
-                iou=config.BOX_MATCHING_IOU_THRESHOLD
-            )
-            logger.info(f"Standard validation results saved in: {validation_results.save_dir}")
+            YOLO(best_model_path).val(data=str(dataset_yaml_path), 
+			split='test', project=str(run_dir), 
+			name="standard_test_validation", 
+			iou=config.BOX_MATCHING_IOU_THRESHOLD
+			)
         except Exception as e:
             logger.exception("An error occurred during standard post-training validation.")
-        # --- END OPTIMIZATION ---
-
-        # --- Proceed with Custom Detailed Evaluation ---
-        eval_output_dir = run_dir / "custom_detailed_evaluation_on_all_data"
-        eval_output_dir.mkdir(parents=True, exist_ok=True)
         
-
-        detector = create_detector_from_config(best_model_path, class_names_map, config, logger)
-        evaluator = YoloEvaluator(detector, logger)
-        logger.info(f"--- Starting Custom Detailed Evaluation (Post-Training) on ALL data ---")
-        evaluator.perform_detailed_evaluation(
-            eval_output_dir=eval_output_dir,
-            all_image_label_pairs_eval=pairs # Evaluate on the entire dataset
-        )
+        # Run our custom detailed evaluation on all data
+        logger.info("--- Starting Custom Detailed Evaluation (Post-Training) on ALL data ---")
+        _run_single_evaluation(best_model_path, class_names_map, pairs, run_dir, logger)
 
     copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}_train_final.log", logger)
 
 def run_direct_evaluation_workflow(pairs, class_names_map, main_log_file, logger):
+    """Orchestrates direct evaluation of one or more pre-trained models."""
     logger.info("--- Starting Direct Evaluation Workflow ---")
     model_path_str = config.MODEL_PATH_FOR_PREDICTION
-    model_path = Path(model_path_str)
-
+    model_path_obj = Path(model_path_str)
     base_dir = config.OUTPUT_DIR / "direct_evaluation_runs"
-    run_name_prefix = f"{model_path.stem}_direct_eval_run"
-    run_dir = create_unique_run_dir(base_dir, run_name_prefix)
-    logger.info(f"Direct evaluation run directory: {run_dir}")
-	
-    save_config_to_run_dir(run_dir, logger)
-    
-    detector = create_detector_from_config(model_path, class_names_map, config, logger)
 
-    # --- Custom Detailed Evaluation ---
-    logger.info(f"--- Starting Custom Detailed Evaluation ---")
-    custom_eval_output_dir = run_dir / "custom_detailed_evaluation" 
-    custom_eval_output_dir.mkdir(parents=True, exist_ok=True)
+    if model_path_obj.is_dir():
+        logger.info(f"Detected folder path. Evaluating all models in: {model_path_obj}")
+        # Create a single shared parent folder for this multi-model run
+        shared_run_dir = base_dir / model_path_obj.name
+        shared_run_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Multi-model evaluation reports will be saved in: {shared_run_dir}")
+        
+        model_files = sorted(list(model_path_obj.glob("*.pt")))
+        if not model_files:
+            logger.error(f"No model files (.pt) found in directory: {model_path_obj}")
+            return
+            
+        summary_results = []
+        for model_file in model_files:
+            logger.info(f"--- Evaluating model: {model_file.name} ---")
+            # Create a specific sub-directory for this model's detailed reports
+            model_specific_dir = shared_run_dir / model_file.stem
+            model_specific_dir.mkdir(parents=True, exist_ok=True)
 
-    evaluator = YoloEvaluator(detector, logger)
-    evaluator.perform_detailed_evaluation(
-        eval_output_dir=custom_eval_output_dir,
-        all_image_label_pairs_eval=pairs
-    )
+            stats = _run_single_evaluation(model_file, class_names_map, pairs, model_specific_dir, logger)
+            stats['model_name'] = model_file.name
+            summary_results.append(stats)
+        
+        # Create and save the multi-model summary report in the shared folder
+        if summary_results:
+            logger.info("--- Generating Multi-Model Summary Report ---")
+            summary_df = pd.DataFrame(summary_results)
+            column_order = ['model_name', 'TP', 'FP', 'FN', 'Precision', 'Recall', 'F1-Score', 'Images with Errors']
+            summary_df = summary_df[column_order]
+            # Save the summary Excel file in the shared directory
+            summary_excel_path = shared_run_dir / "multi_model_evaluation_summary.xlsx"
+            summary_df.to_excel(summary_excel_path, index=False, engine='openpyxl')
+            logger.info(f"Multi-model summary report saved to: {summary_excel_path}")
+    else:
+        logger.info("Detected single model file path. Running standard evaluation.")
+        run_name_prefix = f"{model_path_obj.stem}_eval"
+        run_dir = create_unique_run_dir(base_dir, run_name_prefix)
+        _run_single_evaluation(model_path_obj, class_names_map, pairs, run_dir, logger)
+        copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}_direct_eval_final.log", logger)
 
-    copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}_direct_eval_final.log", logger)
-
+def finalize_and_exit(logger, main_log_file, run_dir, message, final_log_suffix):
+    """Logs a final error message and copies the log file before exiting."""
+    logger.error(message)
+    if run_dir:
+        copy_log_to_run_directory(main_log_file, run_dir, f"{config.LOG_FILE_BASE_NAME}{final_log_suffix}", logger)
 
 def _find_best_model(model, run_dir, logger):
-    # run_dir here is the Ultralytics specific run directory (e.g., project/name)
+    """Finds the path to the best trained model weights."""
     if hasattr(model, 'trainer') and hasattr(model.trainer, 'best') and Path(model.trainer.best).exists():
         path = Path(model.trainer.best).resolve()
         logger.info(f"Best model from trainer: {path}")
         return path
-    # Fallback if trainer object doesn't have 'best' or it's not found
-    # Ultralytics saves weights typically in 'run_dir/weights/best.pt'
     fallback_path = run_dir / "weights" / "best.pt"
     if fallback_path.exists():
         logger.info(f"Best model found at fallback path: {fallback_path}")
         return fallback_path.resolve()
-        
     logger.warning(f"No best model found in {run_dir}. Check training outputs.")
     return None
+
+def _run_single_evaluation(model_path_obj, class_names_map, pairs, output_dir, logger):
+    """
+    Helper function to run a complete evaluation for a single model and save
+    results to a specified directory.
+    
+    Args:
+        model_path_obj (Path): Path to the model file (.pt).
+        class_names_map (dict): Mapping of class IDs to names.
+        pairs (list): List of image-label pairs for evaluation.
+        output_dir (Path): The exact directory to save the evaluation results.
+        logger (Logger): The logger instance.
+        
+    Returns:
+        dict: Overall statistics for the model.
+    """
+
+    # The calling function now provides the exact output directory.
+    save_config_to_run_dir(output_dir, logger)
+
+    detector = create_detector_from_config(model_path_obj, class_names_map, config, logger)
+    evaluator = YoloEvaluator(detector, logger)
+
+    # The detailed evaluation reports (Excel, incorrect predictions) will be saved
+    # directly into the provided output_dir.
+    overall_stats = evaluator.perform_detailed_evaluation(
+        eval_output_dir=output_dir,
+        all_image_label_pairs_eval=pairs
+    )
+    
+    return overall_stats
 
 if __name__ == '__main__':
     main_train()
