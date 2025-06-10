@@ -78,11 +78,13 @@ def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, lo
     logger.info("--- Starting Training Workflow ---")
 
     # --- Data Splitting and YAML Creation ---
-    train_pairs, val_pairs, test_pairs = split_data(pairs, 
-	config.TRAIN_RATIO, 
-	config.VAL_RATIO, 
-	config.TEST_RATIO, logger
-	)
+    train_pairs, val_pairs, test_pairs = split_data(
+        image_label_pairs=pairs, 
+        train_ratio=config.TRAIN_RATIO, 
+        val_ratio=config.VAL_RATIO, 
+        test_ratio=config.TEST_RATIO, 
+        logger_instance=logger
+    )
 	
     dataset_yaml_path = config.OUTPUT_DIR / config.DATASET_YAML_NAME
 
@@ -131,11 +133,16 @@ def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, lo
         # --- OPTIMIZATION: Run standard validation on the test set post-training ---
         logger.info("--- Starting Standard Ultralytics Validation on Test Set ---")
         try:
-            YOLO(best_model_path).val(data=str(dataset_yaml_path), 
-			split='test', project=str(run_dir), 
-			name="standard_test_validation", 
-			iou=config.BOX_MATCHING_IOU_THRESHOLD
-			)
+            # Re-initialize model with the best weights for validation
+            validation_model = YOLO(best_model_path)
+            validation_results = validation_model.val(
+                data=str(dataset_yaml_path),
+                split='test', # Use the test split defined in the YAML
+                project=str(run_dir),
+                name="standard_test_validation",
+                iou=config.BOX_MATCHING_IOU_THRESHOLD
+            )
+            logger.info(f"Standard validation results saved in: {validation_results.save_dir}")
         except Exception as e:
             logger.exception("An error occurred during standard post-training validation.")
         
