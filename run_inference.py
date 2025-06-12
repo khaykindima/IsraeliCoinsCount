@@ -263,6 +263,16 @@ def main():
         save_annotated_images=args.save_annotated_images,
     )
 
+    if args.export_excel and collected_predictions:
+        try:
+            # The predictions are already collected by the runner
+            df = pd.DataFrame(collected_predictions)
+            excel_path = current_run_dir / config.PREDICTIONS_CSV_NAME.replace('.csv', '.xlsx')
+            df.to_excel(excel_path, index=False, engine='openpyxl')
+            logger.info(f"Successfully exported inference results to {excel_path}")
+        except Exception as e:
+            logger.error(f"Failed to export results to Excel: {e}")
+
     logger.info(f"--- Inference run finished. Outputs are in: {current_run_dir} ---")
 
 

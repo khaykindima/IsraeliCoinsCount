@@ -4,6 +4,8 @@ from pathlib import Path
 from bbox_utils import calculate_iou, calculate_aspect_ratio 
 import logging # Assuming logger might be useful inside the filter
 from utils import convert_to_3channel_grayscale 
+import torch
+from torchvision.ops import nms
 
 class CoinDetector:
     def __init__(self, model_path, class_names_map,
@@ -99,42 +101,28 @@ class CoinDetector:
         return filtered_predictions
 
     def _apply_custom_nms(self, predictions_data):
-        """Applies custom inter-class Non-Maximum Suppression if enabled."""
-        if not self.enable_custom_nms: # Check if custom NMS is enabled
-            self.logger.info("Custom NMS is disabled. Skipping NMS.") #
+        """Applies custom inter-class Non-Maximum Suppression using torchvision.ops.nms."""
+        if not self.enable_custom_nms:
+            self.logger.info("Custom NMS is disabled. Skipping NMS.")
             return predictions_data
         if not predictions_data:
             return []
-        
-        num_preds = len(predictions_data)
-        suppressed_flags = [False] * num_preds
-        
-        # Sort by confidence to give higher confidence boxes priority
-        # This helps in a greedy NMS approach where a higher confidence box suppresses a lower one
-        sorted_indices = sorted(range(num_preds), key=lambda k: predictions_data[k]['conf'], reverse=True)
 
-        for i_idx_in_sorted in range(num_preds):
-            i = sorted_indices[i_idx_in_sorted] # Actual index in predictions_data
-            if suppressed_flags[i]:
-                continue
-            for j_idx_in_sorted in range(i_idx_in_sorted + 1, num_preds):
-                j = sorted_indices[j_idx_in_sorted] # Actual index in predictions_data
-                if suppressed_flags[j]:
-                    continue
-                
-                iou = calculate_iou(predictions_data[i]['xyxy'], predictions_data[j]['xyxy']) 
-                
-                if iou > self.iou_suppression_threshold:
-                    # Since predictions_data[i] has higher or equal confidence (due to sorting),
-                    # suppress predictions_data[j]
-                    suppressed_flags[j] = True 
-            
-        final_predictions = [p for idx, p in enumerate(predictions_data) if not suppressed_flags[idx]]
-        original_count = len(predictions_data) #
-        filtered_count = len(final_predictions) #
-        if original_count > filtered_count: #
-            self.logger.info(f"Custom NMS: Retained {filtered_count}/{original_count} predictions.") #
-            
+        # Extract boxes and scores into tensors
+        boxes = torch.tensor([p['xyxy'] for p in predictions_data], dtype=torch.float32)
+        scores = torch.tensor([p['conf'] for p in predictions_data], dtype=torch.float32)
+
+        # Apply NMS
+        indices_to_keep = nms(boxes, scores, self.iou_suppression_threshold)
+
+        # Filter the original predictions list
+        final_predictions = [predictions_data[i] for i in indices_to_keep]
+
+        original_count = len(predictions_data)
+        filtered_count = len(final_predictions)
+        if original_count > filtered_count:
+            self.logger.info(f"Custom NMS: Retained {filtered_count}/{original_count} predictions.")
+
         return final_predictions
 
     def _apply_postprocessing_pipeline(self, raw_predictions_data):

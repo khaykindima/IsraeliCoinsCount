@@ -1,5 +1,4 @@
 from pathlib import Path
-import os
 import cv2 # Import for font selection
 
 # --- Base Paths ---
@@ -36,7 +35,7 @@ METRICS_JSON_NAME = "final_evaluation_metrics.json" # Name for the metrics JSON 
 CONFUSION_MATRIX_PLOT_NAME = "confusion_matrix.png" # Filename for the saved plot
 
 # --- Model Configuration ---
-MODEL_NAME_FOR_TRAINING = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/BestModels/yolov8n_v3.pt"
+MODEL_NAME_FOR_TRAINING = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/BestModels/yolov8n_v5.pt"
 MODEL_PATH_FOR_PREDICTION = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/BestModels/yolov8n_v5.pt"
 
 # --- Training Parameters ---

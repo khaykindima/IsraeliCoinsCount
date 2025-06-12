@@ -1,4 +1,5 @@
 import numpy as np
+from collections import defaultdict
 
 def calculate_iou(box1_xyxy, box2_xyxy):
     """Calculates IoU of two bounding boxes [x1, y1, x2, y2]."""
@@ -59,6 +60,11 @@ def match_predictions(predictions, ground_truths, iou_threshold, class_names_map
 
     # A copy of ground truths with a flag to track matching
     gt_matched_flags = [False] * len(ground_truths)
+    
+    # OPTIMIZATION: Group ground truths by class for faster lookups
+    gt_by_class = defaultdict(list)
+    for i, gt in enumerate(ground_truths):
+        gt_by_class[gt['cls']].append((i, gt)) # Store original index and the gt object
 
     # Sort predictions by confidence score in descending order
     sorted_preds = sorted(predictions, key=lambda x: x['conf'], reverse=True)
@@ -73,13 +79,15 @@ def match_predictions(predictions, ground_truths, iou_threshold, class_names_map
         max_iou = -1
 
         # Find the best possible GT match for the current prediction
-        for i, gt in enumerate(ground_truths):
-            # Only consider GTs of the same class that haven't been matched yet
-            if gt['cls'] == pred_class_id and not gt_matched_flags[i]:
-                iou = calculate_iou(pred['xyxy'], gt['xyxy'])
-                if iou > max_iou:
-                    max_iou = iou
-                    best_match_gt_idx = i
+        # by only searching in the list of GTs for the predicted class.
+        if pred_class_id in gt_by_class:
+            for i, gt in gt_by_class[pred_class_id]:
+                # Only consider GTs that haven't been matched yet
+                if not gt_matched_flags[i]:
+                    iou = calculate_iou(pred['xyxy'], gt['xyxy'])
+                    if iou > max_iou:
+                        max_iou = iou
+                        best_match_gt_idx = i
         
         # If a good enough match is found, it's a True Positive
         if max_iou >= iou_threshold:
