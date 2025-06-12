@@ -37,14 +37,14 @@ CONFUSION_MATRIX_PLOT_NAME = "confusion_matrix.png" # Filename for the saved plo
 
 # --- Model Configuration ---
 MODEL_NAME_FOR_TRAINING = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/BestModels/yolov8n_v3.pt"
-MODEL_PATH_FOR_PREDICTION = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/BestTrainingResults/yolov8n_v3_custom2/weights"
+MODEL_PATH_FOR_PREDICTION = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/BestModels/yolov8n_v5.pt"
 
 # --- Training Parameters ---
 EPOCHS = 0 # Set to >0 for training, 0 for prediction/evaluation only using prediction model
 IMG_SIZE = 640
 TRAINING_OPTIMIZER = 'Adam' # Default is 'SGD', or 'AdamW'
 TRAINING_LR0 = 0.0001 # Initial learning rate
-TRAINING_LRF = 1.00 # Final OneCycleLR learning rate (lr0 * lrf)
+TRAINING_LRF = 0.01 # Final OneCycleLR learning rate (lr0 * lrf)
 
 # --- Data Split Ratios ---
 TRAIN_RATIO = 0.7

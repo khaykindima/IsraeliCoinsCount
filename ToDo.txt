@@ -1,4 +1,2 @@
- - save weights every epoch
- - try different metrics (accuracy), save by different metrics than default
  - support different model, not only YOLO, from ultralytics
  - support not only ultralytics
