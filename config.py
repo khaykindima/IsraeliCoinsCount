@@ -25,6 +25,9 @@ OUTPUT_DIR = Path("yolo_experiment_output")      # Base directory for all output
 IMAGE_SUBDIR_BASENAME = "images"
 LABEL_SUBDIR_BASENAME = "labels"
 ORIGINAL_DATA_YAML_NAME = "data.yaml" # Name of your existing data.yaml with class names
+# If True, the script will look for 'train/', 'valid/', 'test/' subfolders in INPUTS_DIR.
+# If False, it will split all data according to the ratios below.
+USE_PREDEFINED_SPLITS = False
 
 # --- Script-Generated Files ---
 DATASET_YAML_NAME = "custom_dataset_for_training.yaml" # For YOLO training
@@ -46,6 +49,7 @@ TRAINING_LR0 = 0.0001 # Initial learning rate
 TRAINING_LRF = 0.01 # Final OneCycleLR learning rate (lr0 * lrf)
 
 # --- Data Split Ratios ---
+# These are only used if USE_PREDEFINED_SPLITS is False.
 TRAIN_RATIO = 0.7
 VAL_RATIO = 0.15
 TEST_RATIO = 0.15

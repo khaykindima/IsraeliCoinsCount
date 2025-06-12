@@ -77,22 +77,52 @@ def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, lo
     """Orchestrates the model training process."""
     logger.info("--- Starting Training Workflow ---")
 
-    # --- Data Splitting and YAML Creation ---
-    train_pairs, val_pairs, test_pairs = split_data(
-        image_label_pairs=pairs, 
-        train_ratio=config.TRAIN_RATIO, 
-        val_ratio=config.VAL_RATIO, 
-        test_ratio=config.TEST_RATIO, 
-        logger_instance=logger
-    )
-	
+    if config.USE_PREDEFINED_SPLITS:
+        logger.info("Configuration set to use pre-defined splits.")
+        train_dir = config.INPUTS_DIR / 'train'
+        val_dir = config.INPUTS_DIR / 'valid'
+        test_dir = config.INPUTS_DIR / 'test'
+        
+        # Validate that the required directories exist if the flag is set
+        if not (train_dir.is_dir() and val_dir.is_dir()):
+            raise FileNotFoundError(
+                f"USE_PREDEFINED_SPLITS is True, but 'train' and 'valid' directories "
+                f"were not found in {config.INPUTS_DIR}."
+            )
+            
+        logger.info("Found pre-defined 'train' and 'valid' directories.")
+        # The paths for the YAML file are now fixed relative to INPUTS_DIR
+        # Assumes structure like .../train/images, .../train/labels
+        train_rel_img_dirs = [str(Path('train') / config.IMAGE_SUBDIR_BASENAME)]
+        val_rel_img_dirs = [str(Path('valid') / config.IMAGE_SUBDIR_BASENAME)]
+        
+        if test_dir.is_dir():
+            logger.info("Found optional 'test' directory.")
+            test_rel_img_dirs = [str(Path('test') / config.IMAGE_SUBDIR_BASENAME)]
+        else:
+            logger.info("Optional 'test' directory not found.")
+            test_rel_img_dirs = []
+    else:
+        logger.info("Configuration set to split all discovered data based on ratios.")
+        # --- Data Splitting and YAML Creation (Original Logic) ---
+        train_pairs, val_pairs, test_pairs = split_data(
+            image_label_pairs=pairs, # `pairs` is the full list passed to this function
+            train_ratio=config.TRAIN_RATIO,
+            val_ratio=config.VAL_RATIO,
+            test_ratio=config.TEST_RATIO,
+            logger_instance=logger
+        )
+        train_rel_img_dirs = _get_relative_path_for_yolo_yaml(train_pairs, config.INPUTS_DIR)
+        val_rel_img_dirs = _get_relative_path_for_yolo_yaml(val_pairs, config.INPUTS_DIR)
+        test_rel_img_dirs = _get_relative_path_for_yolo_yaml(test_pairs, config.INPUTS_DIR)
+
     dataset_yaml_path = config.OUTPUT_DIR / config.DATASET_YAML_NAME
 
     create_yolo_dataset_yaml(
         str(config.INPUTS_DIR.resolve()),
-        _get_relative_path_for_yolo_yaml(train_pairs, config.INPUTS_DIR),
-        _get_relative_path_for_yolo_yaml(val_pairs, config.INPUTS_DIR),
-        _get_relative_path_for_yolo_yaml(test_pairs, config.INPUTS_DIR),
+        train_rel_img_dirs,
+        val_rel_img_dirs,
+        test_rel_img_dirs,
         class_names_map,
         num_classes,
         dataset_yaml_path,
@@ -234,7 +264,7 @@ def _run_single_evaluation(model_path_obj, class_names_map, pairs, output_dir, l
         dict: Overall statistics for the model.
     """
 
-    # The calling function now provides the exact output directory.
+    # The calling function now provides the exact directory.
     save_config_to_run_dir(output_dir, logger)
 
     detector = create_detector_from_config(model_path_obj, class_names_map, config, logger)
