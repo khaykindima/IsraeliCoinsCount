@@ -223,6 +223,10 @@ def main():
     """
     Main function to set up and run the inference process.
     """
+    # Convert string paths from config to Path objects for the rest of the script
+    config.INPUTS_DIR = Path(config.INPUTS_DIR)
+    config.OUTPUT_DIR = Path(config.OUTPUT_DIR)
+    
     parser = argparse.ArgumentParser(description="Run inference with a trained YOLO model.")
     parser.add_argument(
         "input_path", 
