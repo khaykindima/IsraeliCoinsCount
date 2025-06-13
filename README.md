@@ -20,7 +20,7 @@ A comprehensive computer vision project to detect and classify Israeli coins (On
 ## Demo
 Here is an example of the model detecting and counting coins in an image:
 
-![Demo Image](https://raw.githubusercontent.com/khaykindima/IsraeliCoinsCount/main/demo_image.jpg)
+![Demo Image](https://github.com/khaykindima/IsraeliCoinsCount/blob/main/demo_image.jpg?raw=true)
 *<p align="center">Example of coin detection and the corresponding summary output.</p>*
 
 ## Key Features
