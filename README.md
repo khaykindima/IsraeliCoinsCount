@@ -152,6 +152,16 @@ All workflows are controlled by settings in the `config.py` file. Before running
     ```
     Annotated images and the optional Excel report will be saved in a unique folder inside `experiment_results/inference_runs/`.
 
+2.  For each image, a summary of the detected coins and their total monetary value will be printed to the console.
+
+    **Example Output:**
+    ```
+    INFO: --- Summary for your_image_name.jpg ---
+    INFO: Detections: 1x Five, 2x One, 6x Ten, 3x Two
+    INFO: Total Sum: 73 Shekels
+    INFO: -----------------------------------------
+    ```
+
 ### 5. Utility Scripts
 
 * **Verify Annotations**: Check your ground truth labels by running `visualize_dataset.py`. This will save annotated images to `experiment_results/ground_truth_visualizations/`.
