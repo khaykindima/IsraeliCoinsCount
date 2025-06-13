@@ -18,6 +18,18 @@ A comprehensive computer vision project to detect and classify Israeli coins (On
 * **Automated Cloud Workflow**: Includes a Kaggle notebook for automated setup, evaluation, and results packaging on cloud GPUs.
 * **Reproducible Environments**: Comes with a `ultralytics_env.yml` file to ensure a consistent Conda environment for development and execution.
 
+## Dataset
+
+The dataset used for this project contains images of Israeli coins (1, 2, 5, and 10 Shekels) and is publicly available on Kaggle.
+
+* **Dataset Link**: [Israeli Coins Dataset on Kaggle](https://www.kaggle.com/datasets/dimakhaykin/israelicoins)
+
+## Pre-trained Models
+
+This repository includes a `BestModels/` directory containing several well-performing model weights.
+
+The best model to date, **`yolov8n_v5.pt`**, is recommended for direct evaluation and inference. It achieves an F1-score of **0.9982** on the test set.
+
 ## Project Structure
 
 ```
@@ -102,7 +114,7 @@ All workflows are controlled by settings in the `config.py` file. Before running
 ### 1. Configuration (`config.py`)
 
 * `INPUTS_DIR`: Set the path to your dataset folder.
-* `OUTPUT_DIR`: Set the path where all outputs (logs, models, reports) will be saved.
+* `OUTPUT_DIR`: Set the path where all outputs (logs, models, reports) will be saved (default is `experiment_results`).
 * `MODEL_PATH_FOR_PREDICTION`: Point this to the model file (`.pt`) you want to evaluate or use for inference.
 * `EPOCHS`: This is the master switch.
     * Set to `> 0` to run the **training** workflow.
@@ -116,7 +128,7 @@ All workflows are controlled by settings in the `config.py` file. Before running
     ```bash
     python train.py
     ```
-    All outputs, including the trained models and evaluation reports, will be saved in a unique folder inside `yolo_experiment_output/training_runs/`.
+    All outputs, including the trained models and evaluation reports, will be saved in a unique folder inside `experiment_results/training_runs/`.
 
 ### 3. Evaluating an Existing Model
 
@@ -126,7 +138,7 @@ All workflows are controlled by settings in the `config.py` file. Before running
     ```bash
     python train.py
     ```
-    A unique evaluation folder will be created in `yolo_experiment_output/direct_evaluation_runs/`, containing detailed reports and error images.
+    A unique evaluation folder will be created in `experiment_results/direct_evaluation_runs/`, containing detailed reports and error images.
 
 ### 4. Running Inference on New Images
 
@@ -138,11 +150,11 @@ All workflows are controlled by settings in the `config.py` file. Before running
     # Run on a folder of images and export results to Excel
     python run_inference.py /path/to/your/folder/ --export_excel
     ```
-    Annotated images and the optional Excel report will be saved in a unique folder inside `yolo_experiment_output/inference_runs/`.
+    Annotated images and the optional Excel report will be saved in a unique folder inside `experiment_results/inference_runs/`.
 
 ### 5. Utility Scripts
 
-* **Verify Annotations**: Check your ground truth labels by running `visualize_dataset.py`. This will save annotated images to `yolo_experiment_output/ground_truth_visualizations/`.
+* **Verify Annotations**: Check your ground truth labels by running `visualize_dataset.py`. This will save annotated images to `experiment_results/ground_truth_visualizations/`.
     ```bash
     # Visualize a random sample of 10 images
     python visualize_dataset.py --num_images 10
@@ -155,6 +167,7 @@ All workflows are controlled by settings in the `config.py` file. Before running
 ## Automated Kaggle Workflow
 
 The `israelicoinscount.ipynb` notebook automates the evaluation process on the Kaggle platform.
+
 1.  **Upload**: Upload the notebook to Kaggle.
 2.  **Add Data**: Attach the coin dataset to the notebook.
 3.  **Add Secret**: Add your GitHub Personal Access Token (PAT) as a Kaggle Secret with the label `GITHUB_PAT_ISRAELICOINS`.

@@ -19,7 +19,7 @@ INPUTS_DIR = "Data/CoinCount.v54"
     #  │   └── labels/
     #  │       └── img2.txt
     #  └── ...
-OUTPUT_DIR = "yolo_experiment_output"     # Base directory for all outputs
+OUTPUT_DIR = "experiment_results"     # Base directory for all outputs
 
 # --- Data Configuration ---
 IMAGE_SUBDIR_BASENAME = "images"
