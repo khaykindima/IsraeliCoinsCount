@@ -14,6 +14,9 @@ from utils import (
 )
 
 def main():
+    # Convert string paths from config to Path objects for the rest of the script
+    config.INPUTS_DIR = Path(config.INPUTS_DIR)
+    
     parser = argparse.ArgumentParser(description="Preprocess dataset images. Optionally converts to 3-channel grayscale if enabled in config.")
     parser.add_argument(
         "--output_base_dir",

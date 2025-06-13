@@ -19,6 +19,10 @@ def main():
     """
     Main function to run the ground truth visualization process.
     """
+    # Convert string paths from config to Path objects for the rest of the script
+    config.INPUTS_DIR = Path(config.INPUTS_DIR)
+    config.OUTPUT_DIR = Path(config.OUTPUT_DIR)
+    
     parser = argparse.ArgumentParser(description="Visualize ground truth labels on images from the dataset.")
     parser.add_argument(
         "--num_images",

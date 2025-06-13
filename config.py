@@ -1,4 +1,3 @@
-from pathlib import Path
 import cv2 # Import for font selection
 
 # --- Base Paths ---

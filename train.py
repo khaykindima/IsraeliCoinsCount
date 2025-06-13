@@ -18,6 +18,7 @@ from evaluate_model import YoloEvaluator
 
 def main_train():
     """Main entry point for the training and evaluation script."""
+
     # Convert string paths from config to Path objects for the rest of the script
     config.INPUTS_DIR = Path(config.INPUTS_DIR)
     config.OUTPUT_DIR = Path(config.OUTPUT_DIR)
