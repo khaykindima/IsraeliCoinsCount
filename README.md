@@ -166,7 +166,7 @@ All workflows are controlled by settings in the `config.py` file. Before running
 
 ## Automated Kaggle Workflow
 
-The `israelicoinscount.ipynb` notebook automates the evaluation process on the Kaggle platform.
+The `israelicoinscount.ipynb` notebook automates the **training and evaluation processes** on the Kaggle platform, making it easy to leverage their free GPU sessions.
 
 1.  **Upload**: Upload the notebook to Kaggle.
 2.  **Add Data**: Attach the coin dataset to the notebook.
@@ -174,6 +174,6 @@ The `israelicoinscount.ipynb` notebook automates the evaluation process on the K
 4.  **Run All**: The notebook will automatically:
     * Clone the repository from GitHub.
     * Install dependencies.
-    * Dynamically configure `config.py` for the Kaggle environment.
-    * Run the evaluation script on the specified model.
+    * Dynamically configure `config.py` for the Kaggle environment. You can edit the cell to set the number of `EPOCHS` for either training (`>0`) or evaluation (`0`).
+    * Run the main `train.py` script.
     * Zip the output folder and provide a download link.
