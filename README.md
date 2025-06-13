@@ -5,6 +5,24 @@
 
 A comprehensive computer vision project to detect and classify Israeli coins (One, Two, Five, and Ten Shekels) using YOLOv8. The project includes a full pipeline from data preprocessing and training to in-depth model evaluation and inference.
 
+## Table of Contents
+- [Demo](#demo)
+- [Key Features](#key-features)
+- [Dataset](#dataset)
+- [Pre-trained Models](#pre-trained-models)
+- [Project Structure](#project-structure)
+- [Setup and Installation](#setup-and-installation)
+- [How to Use](#how-to-use)
+- [Automated Kaggle Workflow](#automated-kaggle-workflow)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Demo
+Here is an example of the model detecting and counting coins in an image:
+
+![Demo Image](https://raw.githubusercontent.com/khaykindima/IsraeliCoinsCount/main/demo_image.jpg)
+*<p align="center">Example of coin detection and the corresponding summary output.</p>*
+
 ## Key Features
 
 * **Config-Driven Workflows**: Almost all parameters are centralized in `config.py` for easy management of experiments.
@@ -15,7 +33,7 @@ A comprehensive computer vision project to detect and classify Israeli coins (On
     * Optimized Non-Maximum Suppression (NMS).
 * **In-Depth Evaluation**: The evaluation script generates a multi-sheet Excel report comparing model performance before and after the post-processing pipeline, providing deep insights into the model's behavior.
 * **Error Analysis**: Automatically saves images of incorrect predictions (False Positives and False Negatives) for visual inspection and debugging.
-* **Automated Cloud Workflow**: Includes a Kaggle notebook for automated setup, evaluation, and results packaging on cloud GPUs.
+* **Automated Cloud Workflow**: Includes a Kaggle notebook for automated setup, training, evaluation, and results packaging on cloud GPUs.
 * **Reproducible Environments**: Comes with a `ultralytics_env.yml` file to ensure a consistent Conda environment for development and execution.
 
 ## Dataset
@@ -46,6 +64,8 @@ IsraeliCoinsCount/
 │       │   └── ...
 │       └── test/
 │           └── ...
+├── README.md
+├── .gitignore
 ├── bbox_utils.py
 ├── config.py
 ├── detector.py
@@ -157,7 +177,7 @@ All workflows are controlled by settings in the `config.py` file. Before running
     **Example Output:**
     ```
     INFO: --- Summary for your_image_name.jpg ---
-    INFO: Detections: 1x Five, 2x One, 6x Ten, 3x Two
+    INFO: Detections: 2x One, 3x Two, 1x Five, 6x Ten
     INFO: Total Sum: 73 Shekels
     INFO: -----------------------------------------
     ```
@@ -187,3 +207,9 @@ The `israelicoinscount.ipynb` notebook automates the **training and evaluation p
     * Dynamically configure `config.py` for the Kaggle environment. You can edit the cell to set the number of `EPOCHS` for either training (`>0`) or evaluation (`0`).
     * Run the main `train.py` script.
     * Zip the output folder and provide a download link.
+
+## Contributing
+Contributions are welcome! If you have suggestions for improvements, please open an issue or submit a pull request.
+
+## License
+This project is licensed under the MIT License. See the `LICENSE` file for more details.

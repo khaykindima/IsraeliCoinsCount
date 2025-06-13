@@ -108,11 +108,16 @@ class InferenceRunner:
         # Count occurrences of each coin type
         coin_counts = Counter(p['class_name'].lower().strip() for p in predictions)
 
-        # Calculate the total monetary value
+        # Calculate the total monetary value and prepare strings for logging
         total_sum = 0
         count_strings = []
-        for coin_name, count in sorted(coin_counts.items()):
-            # Use the COIN_VALUES map from the config
+        
+        # Sort the detected coins by their monetary value in ascending order
+        # The key for sorting is the value from the COIN_VALUES map in config.py
+        # x[0] is the coin_name (e.g., 'one') from the (key, value) tuple in coin_counts.items()
+        sorted_coin_counts = sorted(coin_counts.items(), key=lambda x: self.config.COIN_VALUES.get(x[0], 0))
+
+        for coin_name, count in sorted_coin_counts:
             coin_value = self.config.COIN_VALUES.get(coin_name, 0)
             total_sum += count * coin_value
             count_strings.append(f"{count}x {coin_name.capitalize()}")
