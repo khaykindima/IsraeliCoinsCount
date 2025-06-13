@@ -23,7 +23,7 @@ Here is an example of the model detecting and counting coins in an image:
 <p align="center">
   <img src="https://github.com/khaykindima/IsraeliCoinsCount/blob/main/demo_image.jpg?raw=true" alt="Demo Image" width="750">
   <br>
-  <em>A composite image showing the annotated detection and the corresponding summary printed to the console.</em>
+  <em>A composite image showing the annotated detection<br>and the corresponding summary printed to the console.</em>
 </p>
 
 ## Key Features
