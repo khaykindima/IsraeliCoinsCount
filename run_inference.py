@@ -4,6 +4,7 @@ import cv2
 import logging
 import pandas as pd
 import shutil # For copying log file if needed, though now logger writes directly
+from collections import Counter
 
 try:
     import config
@@ -98,6 +99,31 @@ class InferenceRunner:
 
         return images_to_process
 
+    def _calculate_and_log_summary(self, predictions, image_name):
+        """Calculates and logs the coin counts and total sum for an image."""
+        if not predictions:
+            self.logger.info(f"Summary for {image_name}: No coins detected.")
+            return
+
+        # Count occurrences of each coin type
+        coin_counts = Counter(p['class_name'].lower().strip() for p in predictions)
+
+        # Calculate the total monetary value
+        total_sum = 0
+        count_strings = []
+        for coin_name, count in sorted(coin_counts.items()):
+            # Use the COIN_VALUES map from the config
+            coin_value = self.config.COIN_VALUES.get(coin_name, 0)
+            total_sum += count * coin_value
+            count_strings.append(f"{count}x {coin_name.capitalize()}")
+        
+        detection_summary = ", ".join(count_strings)
+
+        self.logger.info(f"--- Summary for {image_name} ---")
+        self.logger.info(f"Detections: {detection_summary}")
+        self.logger.info(f"Total Sum: {total_sum} Shekels")
+        self.logger.info("-" * (20 + len(image_name)))
+
     def run_on_source(self, input_path=None, save_annotated_images=True):
         """
         Runs inference on a source, saves annotated images, and returns prediction data.
@@ -139,7 +165,10 @@ class InferenceRunner:
             # Get predictions
             predictions = self.detector.predict(image_np, return_raw=False)
 
-            # --- MODIFICATION: Collect data for Excel export ---
+            # Calculate and log the summary of counts and total value
+            self._calculate_and_log_summary(predictions, image_path.name)
+
+            # Collect data for optional Excel export
             if not predictions:
                 all_predictions_data.append({
                     'image_name': image_path.name,
@@ -155,8 +184,8 @@ class InferenceRunner:
                         'probability': pred.get('conf', 0.0),
                         'bbox_xyxy': str(pred.get('xyxy', 'N/A'))
                     })
-            # --- END MODIFICATION ---
-
+            
+            # Save the annotated image if requested
             if save_annotated_images:
                 annotated_image = self.detector.draw_predictions_on_image(image_np, predictions)
                 save_path = annotated_output_dir / image_path.name

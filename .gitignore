@@ -1,10 +1,8 @@
 /.vscode/
 /Data/
 /runs/
-/yolo_experiment_output/
 /__pycache__/
-/yolo_experiment_output1/
 /BestResults/yolov8n_best_custom2/
-/yolo_experiment_output2/
 /BestTrainingResults/
 /DefaultModels/
+/experiment_results/

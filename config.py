@@ -114,3 +114,12 @@ INFERENCE_FONT_SCALE = 1.2
 # Font scales for error analysis images (evaluate_model.py)
 ERROR_FP_FONT_SCALE = 1.5 # False Positives
 ERROR_FN_FONT_SCALE = 1.4 # False Negatives (missed GT)
+
+# --- Coin Values ---
+# Maps lowercase class names to their monetary value for calculating total sum.
+COIN_VALUES = {
+    "one": 1,
+    "two": 2,
+    "five": 5,
+    "ten": 10,
+}
