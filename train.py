@@ -18,10 +18,9 @@ from evaluate_model import YoloEvaluator
 
 def main_train():
     """Main entry point for the training and evaluation script."""
-
-    # Convert string paths from config to Path objects for the rest of the script
-    config.INPUTS_DIR = Path(config.INPUTS_DIR)
-    config.OUTPUT_DIR = Path(config.OUTPUT_DIR)
+    # Convert string paths from config to absolute Path objects for the rest of the script
+    config.INPUTS_DIR = Path(config.INPUTS_DIR).resolve()
+    config.OUTPUT_DIR = Path(config.OUTPUT_DIR).resolve()
 
     config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     main_log_file = config.OUTPUT_DIR / f"{config.LOG_FILE_BASE_NAME}_train_or_direct_eval.log"

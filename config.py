@@ -38,8 +38,8 @@ METRICS_JSON_NAME = "final_evaluation_metrics.json" # Name for the metrics JSON 
 CONFUSION_MATRIX_PLOT_NAME = "confusion_matrix.png" # Filename for the saved plot
 
 # --- Model Configuration ---
-MODEL_NAME_FOR_TRAINING = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/BestModels/yolov8n_v5.pt"
-MODEL_PATH_FOR_PREDICTION = "/mnt/c/Work/Repos/MyProjects/DeepLearning/CoinsUltralytics/BestModels/yolov8n_v5.pt"
+MODEL_NAME_FOR_TRAINING = "BestModels/yolov8n_v5.pt"
+MODEL_PATH_FOR_PREDICTION = "BestModels/yolov8n_v5.pt"
 
 # --- Training Parameters ---
 EPOCHS = 0 # Set to >0 for training, 0 for prediction/evaluation only using prediction model

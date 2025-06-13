@@ -1,4 +1,4 @@
-name: ultralytics_env
+name: ultralytics_wsl_env
 channels:
   - conda-forge
   - defaults
