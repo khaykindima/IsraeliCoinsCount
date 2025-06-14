@@ -37,7 +37,7 @@ Here is an example of the model detecting and counting coins in an image:
 * **In-Depth Evaluation**: The evaluation script generates a multi-sheet Excel report comparing model performance before and after the post-processing pipeline, providing deep insights into the model's behavior.
 * **Error Analysis**: Automatically saves images of incorrect predictions (False Positives and False Negatives) for visual inspection and debugging.
 * **Automated Cloud Workflow**: Includes a Kaggle notebook for automated setup, training, evaluation, and results packaging on cloud GPUs.
-* **Reproducible Environments**: Comes with a `ultralytics_env.yml` file to ensure a consistent Conda environment for development and execution.
+* **Reproducible Environments**: Provides dedicated environment files (`ultralytics_wsl_env.yml` and `ultralytics_win_env.yml`) for reproducible setups on both Linux/WSL and native Windows.
 
 ## Dataset
 
@@ -78,61 +78,72 @@ IsraeliCoinsCount/
 ├── preprocess_dataset.py
 ├── run_inference.py
 ├── train.py
-├── ultralytics_env.yml
+├── ultralytics_wsl_env.yml
+├── ultralytics_win_env.yml
 ├── utils.py
 └── visualize_dataset.py
 ```
 
 ## Setup and Installation
 
-### Step 1: Clone the Repository
+This project can be set up on either WSL (Linux) or native Windows. Please follow the instructions for your specific operating system.
 
-```bash
-git clone [https://github.com/khaykindima/IsraeliCoinsCount.git](https://github.com/khaykindima/IsraeliCoinsCount.git)
-cd IsraeliCoinsCount
-```
+### For WSL (Linux) Users (Recommended)
 
-### Step 2: Set Up the Environment
-
-It is highly recommended to use the provided Conda environment file for a consistent setup.
-
-**Option A: Using Conda (Recommended)**
-
-1.  Ensure you have Miniconda or Anaconda installed.
-2.  Create the environment from the `ultralytics_env.yml` file:
+1.  **Clone the Repository**
     ```bash
-    conda env create -f ultralytics_env.yml
+    git clone [https://github.com/khaykindima/IsraeliCoinsCount.git](https://github.com/khaykindima/IsraeliCoinsCount.git)
+    cd IsraeliCoinsCount
     ```
-3.  Activate the new environment:
+2.  **Create and Activate Conda Environment**
     ```bash
-    conda activate ultralytics_env
+    # Create the environment from the WSL file
+    conda env create -f ultralytics_wsl_env.yml
+
+    # Activate the new environment
+    conda activate ultralytics_wsl_env
     ```
 
-**Option B: Using pip**
+### For Native Windows Users
 
-If you are not using Conda, you can install the required packages using pip. Create a `requirements.txt` file with the core dependencies and install from it.
+The setup for native Windows requires a few extra steps after creating the base environment.
 
-```
-# requirements.txt
-ultralytics==8.3.143
-torch
-torchvision
-pandas
-openpyxl
-opencv-python
-seaborn
-matplotlib
-```
+1.  **Clone the Repository**
+    ```powershell
+    git clone [https://github.com/khaykindima/IsraeliCoinsCount.git](https://github.com/khaykindima/IsraeliCoinsCount.git)
+    cd IsraeliCoinsCount
+    ```
+2.  **Create the Base Conda Environment**
+    ```powershell
+    # Create the environment from the Windows file
+    conda env create -f ultralytics_win_env.yml
+    ```
+3.  **Activate the Environment**
+    ```powershell
+    conda activate ultralytics_win_env
+    ```
+4.  **Install PyTorch Manually**
+    
+    PyTorch must be installed separately to ensure the correct version for your hardware is used. Run **one** of the following commands in your activated terminal.
 
-Then install the packages:
-
-```bash
-pip install -r requirements.txt
-```
+    * **If you have an NVIDIA GPU:**
+        ```powershell
+        pip install torch torchvision torchaudio --index-url [https://download.pytorch.org/whl/cu121](https://download.pytorch.org/whl/cu121)
+        ```
+    * **If you do NOT have an NVIDIA GPU (CPU only):**
+        ```powershell
+        pip install torch torchvision torchaudio
+        ```
+5.  **Install ultralytics-thop Manually**
+    
+    This package is also required and must be installed separately.
+    ```powershell
+    python -m pip install ultralytics-thop>=2.0.0
+    ```
 
 ## How to Use
 
-All workflows are controlled by settings in the `config.py` file. Before running any script, review and adjust the configuration as needed.
+Once your environment is set up and activated, all workflows are controlled by `config.py`.
 
 ### 1. Configuration (`config.py`)
 
