@@ -109,7 +109,9 @@ BOX_COLOR_MAP = {
     "ten": (255, 255, 0),     # Cyan/Teal
 }
 DEFAULT_BOX_COLOR = (255, 0, 0) # Blue for any other classes not in map
-# ADDED: Configurable thickness and font settings
+
+# Base values for drawing parameters. If adaptive drawing is enabled,
+# these are scaled relative to the reference image size.
 BOX_THICKNESS = 2
 TEXT_THICKNESS = 3
 FONT_FACE = cv2.FONT_HERSHEY_SIMPLEX
@@ -118,6 +120,10 @@ INFERENCE_FONT_SCALE = 1.2
 # Font scales for error analysis images (evaluate_model.py)
 ERROR_FP_FONT_SCALE = 1.5 # False Positives
 ERROR_FN_FONT_SCALE = 1.4 # False Negatives (missed GT)
+
+# --- Adaptive Drawing Configuration ---
+ADAPTIVE_DRAWING_ENABLED = True
+REFERENCE_IMAGE_WIDTH = 4000 # The width for which the base drawing parameters above are optimized.
 
 # --- Coin Values ---
 # Maps lowercase class names to their monetary value for calculating total sum.

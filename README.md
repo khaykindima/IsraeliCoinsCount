@@ -49,7 +49,7 @@ The dataset used for this project contains images of Israeli coins (1, 2, 5, and
 
 This repository includes a `BestModels/` directory containing several well-performing model weights.
 
-The best model to date, **`yolov8n_v5.pt`**, is recommended for direct evaluation and inference. It achieves an F1-score of **0.9982** on the test set.
+The best model to date, **`yolov8n_v5.pt`**, is recommended for direct evaluation and inference.
 
 ## Project Structure
 

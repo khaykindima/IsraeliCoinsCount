@@ -1,303 +1,448 @@
+import os
+import yaml
+import random
+import shutil
 import logging
 from pathlib import Path
 import cv2
-import json
-from collections import Counter
+import numpy as np
 import pandas as pd
-
-import config
-from bbox_utils import match_predictions, calculate_iou, calculate_aspect_ratio
-from utils import (
-    parse_yolo_annotations,
-    draw_error_annotations,
-    calculate_prf1
-)
-from metrics_calculator import DetectionMetricsCalculator
-
-class YoloEvaluator:
-    def __init__(self, detector, logger, config_module=config):
-        self.logger = logger
-        self.config = config_module
-        self.detector = detector
-
-    def perform_detailed_evaluation(self, eval_output_dir, all_image_label_pairs_eval):
-        model_path_to_eval = self.detector.model_path
-        class_names_map = self.detector.class_names_map
-        total_images = len(all_image_label_pairs_eval)
-
-        self.logger.info(f"--- Starting Detailed Evaluation for Model: {model_path_to_eval} on {total_images} images ---")
-        incorrect_dir = eval_output_dir / self.config.INCORRECT_PREDICTIONS_SUBDIR
-        incorrect_dir.mkdir(parents=True, exist_ok=True)
-        
-        metrics_calc = DetectionMetricsCalculator(class_names_map, self.logger, self.config)
-        
-        # Metrics Set 1: Before Post-Process (Custom Match)
-        aggregate_stats_before_custom = {name: {'TP': 0, 'FP': 0, 'FN': 0} for name in class_names_map.values()}
-        
-        # Metrics Set 2: After Post-Process (Custom Match)
-        aggregate_stats_after_custom = {name: {'TP': 0, 'FP': 0, 'FN': 0} for name in class_names_map.values()}
-
-        all_detection_correctness_data = []
-        error_count_before = 0
-        error_count_after = 0
-        
-        for img_path, lbl_path in all_image_label_pairs_eval:
-            original_img = cv2.imread(str(img_path))
-            if original_img is None:
-                self.logger.warning(f"Could not read image {img_path}, skipping.")
-                continue
-            
-            preds_after, preds_before = self.detector.predict(original_img.copy(), return_raw=True)
-            
-            h, w = original_img.shape[:2]
-            gts_raw = parse_yolo_annotations(lbl_path, self.logger)
-            ground_truths = [{'cls': cid, 'xyxy': [(cx-cw/2)*w, (cy-ch/2)*h, (cx+cw/2)*w, (cy+ch/2)*h]} for cid, cx, cy, cw, ch in gts_raw]
-            
-            # --- "Before" stats (Custom Match) ---
-            stats_b_img, _, fp_b_img, fn_b_img = match_predictions(preds_before, ground_truths, self.config.BOX_MATCHING_IOU_THRESHOLD, class_names_map)
-            if any(fp_b_img) or any(fn_b_img):
-                error_count_before += 1
-            for cn in class_names_map.values():
-                for metric in ['TP', 'FP', 'FN']:
-                    aggregate_stats_before_custom[cn][metric] += stats_b_img[cn][metric]
-
-            # --- "After" stats (Custom Match) ---
-            # This is also used for error images and detailed TP/FP/FN list for Excel
-            stats_a_custom_img, tp_after_img, fp_after_img, fn_after_img = match_predictions(
-                preds_after, ground_truths, self.config.BOX_MATCHING_IOU_THRESHOLD, class_names_map
-            )
-            for cn in class_names_map.values():
-                for metric in ['TP', 'FP', 'FN']:
-                    aggregate_stats_after_custom[cn][metric] += stats_a_custom_img[cn][metric]
-            
-            # --- Populate Excel data from the "After (Custom Match)" results ---
-            for pred_tp in tp_after_img: 
-                all_detection_correctness_data.append({
-                    'image_name': img_path.name, 
-                    'class_name': pred_tp['class_name'], 
-                    'probability': pred_tp['conf'], 
-                    'pred_aspect_ratio': calculate_aspect_ratio(pred_tp['xyxy']),
-                    'gt_aspect_ratio': calculate_aspect_ratio(pred_tp['matched_gt_xyxy']) if 'matched_gt_xyxy' in pred_tp else None, 
-                    'box_correctness': 'TP'
-                })
-            for pred_fp in fp_after_img: 
-                all_detection_correctness_data.append({
-                    'image_name': img_path.name, 
-                    'class_name': pred_fp['class_name'], 
-                    'probability': pred_fp['conf'], 
-                    'pred_aspect_ratio': calculate_aspect_ratio(pred_fp['xyxy']), 
-                    'gt_aspect_ratio': None, # No GT for FP
-                    'box_correctness': 'FP'
-                })
-            for gt_fn in fn_after_img: 
-                all_detection_correctness_data.append({
-                    'image_name': img_path.name, 
-                    'class_name': gt_fn['class_name'], 
-                    'probability': None,
-                    'pred_aspect_ratio': None, 
-                    'gt_aspect_ratio': calculate_aspect_ratio(gt_fn['xyxy']), 
-                    'box_correctness': 'FN'
-                })
-
-            # Update Ultralytics CM with "After" predictions for Metrics Set 3
-            metrics_calc.update_confusion_matrix(preds_after, ground_truths)
-            
-            # --- Draw Error Annotations for After ---
-            if any(fp_after_img) or any(fn_after_img): # error_count_after based on custom match
-                error_count_after += 1
-                gt_counts = Counter(g['cls'] for g in ground_truths)
-                pred_counts = Counter(p['cls'] for p in preds_after)
-                gt_str = ", ".join([f"{count}x {class_names_map[name]}" for name, count in sorted(gt_counts.items())])
-                pred_str = ", ".join([f"{count}x {class_names_map[name]}" for name, count in sorted(pred_counts.items())])
-                self.logger.warning(f"Incorrect Prediction in: {img_path.name}\n  - Ground Truth: [{gt_str}]\n  - Predicted (Post-Filter): [{pred_str}]")
-                annotated_img = draw_error_annotations(original_img.copy(), fp_after_img, fn_after_img, class_names_map, self.config)
-                cv2.imwrite(str(incorrect_dir / img_path.name), annotated_img)
-
-        # --- Metrics Set 3: After Post-Process (Ultralytics CM) ---
-        final_metrics_ultralytics_cm = metrics_calc.compute_metrics(eval_output_dir=eval_output_dir)
-        per_class_stats_ultralytics_cm = final_metrics_ultralytics_cm.get('per_class', {})
-        overall_stats_ultralytics_cm = final_metrics_ultralytics_cm.get('overall', {})
-
-        # --- CONSOLIDATED REPORTING ---
-        self._log_console_summaries(total_images, class_names_map, 
-                                    aggregate_stats_before_custom, 
-                                    aggregate_stats_after_custom, # For logging, can choose one "After" or log both
-                                    per_class_stats_ultralytics_cm, 
-                                    overall_stats_ultralytics_cm,
-                                    error_count_before, error_count_after)
-        
-        self._generate_consolidated_excel_report(
-            eval_output_dir, class_names_map, 
-            aggregate_stats_before_custom, 
-            aggregate_stats_after_custom,
-            per_class_stats_ultralytics_cm, 
-            overall_stats_ultralytics_cm, 
-            all_detection_correctness_data, 
-            error_count_before, error_count_after
-        )
-
-        self.logger.info(f"--- Overall (Micro - Ultralytics CM) | Precision: {overall_stats_ultralytics_cm.get('precision_micro',0):.4f}, Recall: {overall_stats_ultralytics_cm.get('recall_micro',0):.4f}, F1-score: {overall_stats_ultralytics_cm.get('f1_score_micro',0):.4f} ---")
-        metrics_file_path = eval_output_dir / "final_evaluation_metrics_ultralytics_cm.json" # Clarify filename
-        with open(metrics_file_path, 'w') as f:
-            json.dump(final_metrics_ultralytics_cm, f, indent=4)
-        self.logger.info(f"Saved final Ultralytics CM metrics dictionary to: {metrics_file_path}")
-        
-        # --- MODIFICATION START ---
-        # Prepare the dictionary to be returned for the multi-model summary
-        overall_sac = {metric: sum(s.get(metric, 0) for s in aggregate_stats_after_custom.values()) for metric in ['TP', 'FP', 'FN']}
-        prf1_sac_overall = calculate_prf1(overall_sac['TP'], overall_sac['FP'], overall_sac['FN'])
-        overall_sac['Precision'] = prf1_sac_overall['precision']
-        overall_sac['Recall'] = prf1_sac_overall['recall']
-        overall_sac['F1-Score'] = prf1_sac_overall['f1_score']
-        overall_sac['Images with Errors'] = error_count_after
-
-        # Return the calculated overall stats for the "After Post-Process (Custom Match)"
-        return overall_sac
-        # --- MODIFICATION END ---
-
-    def _log_console_summaries(self, total_images, class_names_map, 
-                               stats_before_custom, stats_after_custom, 
-                               per_class_stats_ucm, overall_stats_ucm,
-                               error_count_before, error_count_after):
-							   
-        """Logs clear, well-formatted summaries to the console."""
-        self.logger.info("--- Image Error Summary ---")
-        self.logger.info(f"Total images with errors (Before Post-Processing, Custom Match): {error_count_before} / {total_images}")
-        self.logger.info(f"Total images with errors (After Post-Processing, Custom Match):  {error_count_after} / {total_images}")
-        self.logger.info("-" * 70)
-        
-        self.logger.info("--- Metrics Summary ---")
-        for class_id in sorted(class_names_map.keys()):
-            class_name = class_names_map[class_id]
-            sbc = stats_before_custom.get(class_name, {})
-            sac = stats_after_custom.get(class_name, {})
-            sau_pc = per_class_stats_ucm.get(class_name, {})
-            
-            # Recalculate P,R,F1 for console summary consistency if needed, or use pre-calculated ones
-            prf1_sbc = calculate_prf1(sbc.get('TP',0), sbc.get('FP',0), sbc.get('FN',0))
-            prf1_sac = calculate_prf1(sac.get('TP',0), sac.get('FP',0), sac.get('FN',0))
-            # sau already contains P,R,F1 calculated by metrics_calculator
-            
-            self.logger.info(f"Class: {class_name}")
-            self.logger.info(f"  - Before (Custom Match): TP: {sbc.get('TP',0)}, FP: {sbc.get('FP',0)}, FN: {sbc.get('FN',0)}, "
-                             f"P: {prf1_sbc['precision']:.4f}, R: {prf1_sbc['recall']:.4f}, F1: {prf1_sbc['f1_score']:.4f}")
-            self.logger.info(f"  - After (Custom Match):  TP: {sac.get('TP',0)}, FP: {sac.get('FP',0)}, FN: {sac.get('FN',0)}, "
-                             f"P: {prf1_sac['precision']:.4f}, R: {prf1_sac['recall']:.4f}, F1: {prf1_sac['f1_score']:.4f}")
-            self.logger.info(f"  - After (Ultralytics CM):TP: {sau_pc.get('TP',0)}, FP: {sau_pc.get('FP',0)}, FN: {sau_pc.get('FN',0)} (GTs: {sau_pc.get('GT_count',0)}), " 
-                             f"P: {sau_pc.get('precision',0):.4f}, R: {sau_pc.get('recall',0):.4f}, F1: {sau_pc.get('f1_score',0):.4f}")
-        self.logger.info("-" * 70) #
-        self.logger.info("Overall (Ultralytics CM - Micro):") 
-        self.logger.info(f"  TP: {overall_stats_ucm.get('TP',0)}, FP: {overall_stats_ucm.get('FP',0)}, FN: {overall_stats_ucm.get('FN',0)}") 
-        self.logger.info(f"  P: {overall_stats_ucm.get('precision_micro',0):.4f}, R: {overall_stats_ucm.get('recall_micro',0):.4f}, F1: {overall_stats_ucm.get('f1_score_micro',0):.4f}") 
-        self.logger.info("-" * 70) #
-
-    def _generate_consolidated_excel_report(self, eval_output_dir, class_names_map, 
-                                            stats_before_custom, stats_after_custom, 
-                                            per_class_stats_ultralytics_cm, 
-                                            overall_stats_ultralytics_cm,
-                                            detection_correctness_data, error_count_before, error_count_after):
-        """
-        Generates a single Excel file with a restructured summary and a detailed detection list.
-        """
-        excel_path = eval_output_dir / "evaluation_summary.xlsx"
-        try:
-            with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
-                # Sheet 1: Class Metrics Summary
-                summary_data = []
-                
-                # Process per-class rows using the helper
-                for class_id in sorted(class_names_map.keys()):
-                    class_name = class_names_map[class_id]
-                    row_data = {('Class', ''): class_name}
-                    row_data.update(self._prepare_metrics_row(stats_before_custom.get(class_name, {}), 'Before Post-Process (Custom Match)'))
-                    row_data.update(self._prepare_metrics_row(stats_after_custom.get(class_name, {}), 'After Post-Process (Custom Match)'))
-                    row_data.update(self._prepare_metrics_row(per_class_stats_ultralytics_cm.get(class_name, {}), 'After Post-Process (Ultralytics CM)'))
-                    summary_data.append(row_data)
-
-                # Process Overall row using the helper
-                overall_sbc = {metric: sum(s.get(metric, 0) for s in stats_before_custom.values()) for metric in ['TP', 'FP', 'FN']}
-                overall_sac = {metric: sum(s.get(metric, 0) for s in stats_after_custom.values()) for metric in ['TP', 'FP', 'FN']}
-                overall_sau_for_excel = { #
-                    'TP': overall_stats_ultralytics_cm.get('TP', 0), 
-                    'FP': overall_stats_ultralytics_cm.get('FP', 0), 
-                    'FN': overall_stats_ultralytics_cm.get('FN', 0), 
-                    'precision': overall_stats_ultralytics_cm.get('precision_micro', 0), 
-                    'recall': overall_stats_ultralytics_cm.get('recall_micro', 0), 
-                    'f1_score': overall_stats_ultralytics_cm.get('f1_score_micro', 0) 
-                }
-
-                overall_row_data = {('Class', ''): 'Overall (Micro)'}
-                overall_row_data.update(self._prepare_metrics_row(overall_sbc, 'Before Post-Process (Custom Match)', error_count=error_count_before))
-                overall_row_data.update(self._prepare_metrics_row(overall_sac, 'After Post-Process (Custom Match)', error_count=error_count_after))
-                overall_row_data.update(self._prepare_metrics_row(overall_sau_for_excel, 'After Post-Process (Ultralytics CM)')) #
-                summary_data.append(overall_row_data)
-                
-                df_metrics = pd.DataFrame(summary_data)
-                df_metrics.columns = pd.MultiIndex.from_tuples(df_metrics.columns)
-                df_metrics = df_metrics.set_index(('Class', ''))
-                df_metrics.index.name = 'Class'
-
-                metric_order = ['TP', 'FP', 'FN', 'Precision', 'Recall', 'F1-Score', 'Images with Errors'] 
-                
-                prefixes = [] 
-                if ('Before Post-Process (Custom Match)', 'TP') in df_metrics.columns:  
-                    prefixes.append('Before Post-Process (Custom Match)') 
-                if ('After Post-Process (Custom Match)', 'TP') in df_metrics.columns:  
-                    prefixes.append('After Post-Process (Custom Match)') 
-                if ('After Post-Process (Ultralytics CM)', 'TP') in df_metrics.columns: 
-                    prefixes.append('After Post-Process (Ultralytics CM)')
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 
-                final_column_order = []
-                for prefix_name in prefixes:
-                    for metric_name_suffix in metric_order: 
-                        if (prefix_name, metric_name_suffix) in df_metrics.columns:
-                            final_column_order.append((prefix_name, metric_name_suffix))
-                
-                df_metrics = df_metrics[final_column_order]
-                df_metrics.to_excel(writer, sheet_name='Class Metrics Summary')
-
-
-                if detection_correctness_data: 
-                    df_detections = pd.DataFrame(detection_correctness_data) 
-                    column_order = ['image_name', 'class_name', 'probability', 
-                                    'pred_aspect_ratio', 'gt_aspect_ratio',  
-                                    'box_correctness'] 
-                    df_detections = df_detections[column_order].sort_values( 
-                        by=['image_name', 'box_correctness', 'probability'],  
-                        ascending=[True, True, False] 
-                    )
-                    df_detections.to_excel(writer, sheet_name='Detailed Detections', index=False) 
-
-
-        except Exception as e:
-            self.logger.error(f"Failed to generate consolidated Excel report: {e}. Ensure 'openpyxl' is installed (`pip install openpyxl`).")
-
-    def _prepare_metrics_row(self, stats, prefix, error_count=None): 
-        tp = stats.get('TP', 0) 
-        fp = stats.get('FP', 0) 
-        fn = stats.get('FN', 0) 
-
-        if 'precision' in stats and 'recall' in stats and 'f1_score' in stats: 
-            precision = stats['precision'] 
-            recall = stats['recall'] 
-            f1_score = stats['f1_score'] 
-        else:  #
-            prf1_calc = calculate_prf1(tp, fp, fn) 
-            precision = prf1_calc['precision'] 
-            recall = prf1_calc['recall'] 
-            f1_score = prf1_calc['f1_score'] #
-
-        row_data = { #
-            (prefix, 'TP'): tp, #
-            (prefix, 'FP'): fp, #
-            (prefix, 'FN'): fn, #
-            (prefix, 'Precision'): precision, #
-            (prefix, 'Recall'): recall, #
-            (prefix, 'F1-Score'): f1_score, #
+def get_adaptive_drawing_params(image_width, config_module):
+    """
+    Calculates drawing parameters scaled to the image size, based on a reference width.
+    """
+    # If adaptive drawing is disabled, return the base values from config
+    if not getattr(config_module, 'ADAPTIVE_DRAWING_ENABLED', False):
+        return {
+            "box_thickness": config_module.BOX_THICKNESS,
+            "text_thickness": config_module.TEXT_THICKNESS,
+            "inference_font_scale": config_module.INFERENCE_FONT_SCALE,
+            "error_fp_font_scale": config_module.ERROR_FP_FONT_SCALE,
+            "error_fn_font_scale": config_module.ERROR_FN_FONT_SCALE,
         }
+    
+    # Calculate the scaling factor based on image width
+    reference_width = getattr(config_module, 'REFERENCE_IMAGE_WIDTH', 4000)
+    scaling_factor = image_width / reference_width
 
-        if error_count is not None:
-            row_data[(prefix, 'Images with Errors')] = error_count
+    # Clip the scaling factor to prevent parameters from becoming too small on tiny images
+    scaling_factor = max(0.4, scaling_factor)
+
+    # Scale the parameters, ensuring thickness is at least 1
+    box_thickness = max(1, int(round(config_module.BOX_THICKNESS * scaling_factor)))
+    text_thickness = max(1, int(round(config_module.TEXT_THICKNESS * scaling_factor)))
+    inference_font_scale = config_module.INFERENCE_FONT_SCALE * scaling_factor
+    error_fp_font_scale = config_module.ERROR_FP_FONT_SCALE * scaling_factor
+    error_fn_font_scale = config_module.ERROR_FN_FONT_SCALE * scaling_factor
+
+    return {
+        "box_thickness": box_thickness,
+        "text_thickness": text_thickness,
+        "inference_font_scale": inference_font_scale,
+        "error_fp_font_scale": error_fp_font_scale,
+        "error_fn_font_scale": error_fn_font_scale,
+    }
+
+
+# Factory function for creating a detector 
+def create_detector_from_config(model_path, class_map, config_module, logger):
+    """
+    Creates a fully configured CoinDetector instance from config.
+    """
+	
+    from detector import CoinDetector
+	
+    model_path_obj = Path(model_path)
+    logger.info(f"Creating detector instance with model: {model_path_obj}")
+    
+    detector = CoinDetector(
+        model_path=model_path_obj,
+        class_names_map=class_map,
+        config_module=config_module,  # Pass the entire config module
+        per_class_conf_thresholds=config_module.PER_CLASS_CONF_THRESHOLDS,
+        default_conf_thresh=config_module.DEFAULT_CONF_THRESHOLD,
+        iou_suppression_threshold=config_module.IOU_SUPPRESSION_THRESHOLD,
+        enable_aspect_ratio_filter=config_module.ENABLE_ASPECT_RATIO_FILTER,
+        aspect_ratio_filter_threshold=config_module.ASPECT_RATIO_FILTER_THRESHOLD,
+        enable_per_class_confidence=config_module.ENABLE_PER_CLASS_CONFIDENCE,
+        enable_custom_nms=config_module.ENABLE_CUSTOM_NMS,
+        enable_grayscale_preprocessing_from_config=config_module.ENABLE_GRAYSCALE_PREPROCESSING
+    )
+    return detector
+
+def convert_to_3channel_grayscale(image_np_or_path, logger_instance=None):
+    """
+    Loads an image if a path is given, converts it to grayscale,
+    and then converts the grayscale image to a 3-channel BGR format.
+    """
+    log = logger_instance if logger_instance else logging.getLogger(__name__)
+
+    log.debug(f"Starting image preprocessing for input: {type(image_np_or_path)}")
+    image_np = None
+    if isinstance(image_np_or_path, (str, Path)):
+        if not Path(image_np_or_path).exists():
+            log.error(f"Image path does not exist: {image_np_or_path}")
+            return None
+        image_np = cv2.imread(str(image_np_or_path))
+        if image_np is None:
+            log.error(f"Failed to load image from path: {image_np_or_path}")
+            return None
+        log.debug(f"Successfully loaded image from path: {image_np_or_path}")
+    elif isinstance(image_np_or_path, np.ndarray):
+        image_np = image_np_or_path.copy() 
+        log.debug("Processing image from NumPy array.")
+    else:
+        log.error(f"Invalid image input type: {type(image_np_or_path)}")
+        return None
+
+    if image_np.size == 0:
+        log.error("Input image array is empty.")
+        return None
+
+    if image_np.ndim == 2 or (image_np.ndim == 3 and image_np.shape[2] == 1):
+        log.debug("Image appears to be already grayscale or has only one channel.")
+        gray_image_np = image_np if image_np.ndim == 2 else image_np[:,:,0]
+    elif image_np.ndim == 3 and image_np.shape[2] == 3: 
+        gray_image_np = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
+        log.debug("Converted BGR image to grayscale.")
+    elif image_np.ndim == 3 and image_np.shape[2] == 4: 
+        log.debug("Input image has 4 channels (e.g., BGRA). Converting to BGR first.")
+        bgr_image_np = cv2.cvtColor(image_np, cv2.COLOR_BGRA2BGR)
+        gray_image_np = cv2.cvtColor(bgr_image_np, cv2.COLOR_BGR2GRAY)
+        log.debug("Converted 4-channel image to grayscale.")
+    else:
+        log.error(f"Unsupported image format/dimensions: {image_np.shape}")
+        return None
             
-        return row_data
+    image_for_model = cv2.cvtColor(gray_image_np, cv2.COLOR_GRAY2BGR)
+    log.debug("Converted grayscale image to 3-channel BGR for model input. Preprocessing finished.")
+    return image_for_model
+
+def draw_ground_truth_boxes(image_np, ground_truths_list, class_names_map, config_module):
+    """
+    Draws ground truth bounding boxes on an image using adaptive settings.
+    """
+    img_to_draw_on = image_np.copy()
+    h, w, _ = img_to_draw_on.shape
+    
+    params = get_adaptive_drawing_params(w, config_module)
+    box_thickness = params['box_thickness']
+    text_thickness = params['text_thickness']
+    font_scale = params['inference_font_scale']
+    font = config_module.FONT_FACE
+    box_color_map = config_module.BOX_COLOR_MAP
+    default_box_color = config_module.DEFAULT_BOX_COLOR
+    
+    for gt_data in ground_truths_list:
+        x1, y1, x2, y2 = map(int, gt_data['xyxy'])
+        class_id = gt_data['cls']
+        class_name = class_names_map.get(class_id, f"ID_{class_id}")
+        label = f"GT: {class_name}"
+        color = box_color_map.get(class_name.lower().strip(), default_box_color)
+
+        cv2.rectangle(img_to_draw_on, (x1, y1), (x2, y2), color, box_thickness)
+        (text_w, text_h), _ = cv2.getTextSize(label, font, font_scale, text_thickness)
+        cv2.rectangle(img_to_draw_on, (x1, y1 - text_h - 5), (x1 + text_w, y1), color, -1)
+        cv2.putText(img_to_draw_on, label, (x1, y1 - 5), font, font_scale, (0,0,0), text_thickness)
+        
+    return img_to_draw_on
+
+def save_config_to_run_dir(run_dir_path, logger):
+    """Copies config.py to the specified run directory for reproducibility."""
+    try:
+        # Build path relative to this utils.py file, not the current working directory
+        project_root = Path(__file__).parent
+        config_source_path = project_root / "config.py"
+
+        if not config_source_path.exists():
+             logger.warning(f"config.py not found at expected path {config_source_path}. Skipping save.")
+             return
+
+        destination_path = Path(run_dir_path) / "config.py"
+        shutil.copy2(config_source_path, destination_path)
+        logger.info(f"Saved a copy of the configuration to {destination_path}")
+    except Exception as e:
+        logger.error(f"Could not save config.py to run directory: {e}")
+
+
+# --- Logger Setup ---
+LOG_FORMATTER = logging.Formatter('%(asctime)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s')
+
+def setup_logging(log_file_path_obj, logger_name='yolo_script_logger'): # Changed default logger name
+    """Configures logging to both console and a file for a given logger."""
+    logger = logging.getLogger(logger_name)
+    
+    if logger.handlers: 
+        for handler in logger.handlers[:]:
+            logger.removeHandler(handler)
+            handler.close()
+
+    logger.setLevel(logging.INFO)
+    file_handler = logging.FileHandler(log_file_path_obj, mode='w')
+    file_handler.setFormatter(LOG_FORMATTER)
+    logger.addHandler(file_handler)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(LOG_FORMATTER)
+    logger.addHandler(stream_handler)
+    
+    logger.info(f"Logging for '{logger_name}' initialized. File output to: {log_file_path_obj}")
+    return logger
+
+def copy_log_to_run_directory(initial_log_path, run_dir_path, target_log_filename, logger_instance=None):
+    """Copies the log file to the specified run directory."""
+    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
+    if run_dir_path and initial_log_path.exists():
+        destination_log_path = Path(run_dir_path) / target_log_filename
+        shutil.copy2(initial_log_path, destination_log_path) 
+        log.info(f"Log file copied to: {destination_log_path}")
+
+# --- Centralized function for creating unique run directories ---
+def create_unique_run_dir(base_dir_pathobj, run_name_prefix):
+    """Creates a unique run directory by appending a counter."""
+    candidate_dir = base_dir_pathobj / run_name_prefix
+    counter = 1
+    while candidate_dir.exists():
+        candidate_dir = base_dir_pathobj / f"{run_name_prefix}{counter}"
+        counter += 1
+    candidate_dir.mkdir(parents=True, exist_ok=False)
+    return candidate_dir
+
+def validate_config_and_paths(config_module, mode, logger):
+    """Validates key settings from the config module based on the run mode."""
+    is_valid = True
+    logger.info("--- Validating Configuration ---")
+
+    # Validate INPUTS_DIR
+    if not config_module.INPUTS_DIR.exists():
+        logger.error(f"Config Error: INPUTS_DIR does not exist at '{config_module.INPUTS_DIR}'.")
+        is_valid = False
+
+    # Validate data split ratios
+    if not config_module.USE_PREDEFINED_SPLITS and not (0.999 < config_module.TRAIN_RATIO + config_module.VAL_RATIO + config_module.TEST_RATIO < 1.001):
+        logger.error("Config Error: Data split ratios must sum to 1.0 when not using pre-defined splits.")
+        is_valid = False
+
+    # Validate paths/settings specific to the run mode
+    if mode in ['evaluate', 'inference', 'train_direct_eval']:
+        model_path_str = config_module.MODEL_PATH_FOR_PREDICTION
+        model_path_obj = Path(model_path_str) # Convert to Path for validation
+        if not model_path_obj.exists():
+            logger.error(f"Config Error: MODEL_PATH_FOR_PREDICTION does not exist at '{model_path_str}'.")
+            is_valid = False
+
+    if mode == 'train' and config_module.EPOCHS <= 0:
+        logger.error(f"Config Error: EPOCHS must be > 0 for training, but is {config_module.EPOCHS}.")
+        is_valid = False
+
+    return is_valid
+
+def discover_and_pair_image_labels(inputs_dir_pathobj, image_subdir_basename, label_subdir_basename, logger_instance=None):
+    """
+    Recursively scans for image and label folders and creates pairs.
+    It looks for sibling folders with the specified base names (e.g., 'images' and 'labels').
+    """
+    log = logger_instance if logger_instance else logging.getLogger(__name__)
+    image_label_pairs = []
+    valid_label_dirs_for_class_scan = []
+    
+    log.info(f"Recursively searching for '{image_subdir_basename}' folders within {inputs_dir_pathobj}...")
+
+    # Use rglob to find all directories named `image_subdir_basename` at any depth
+    for image_dir in inputs_dir_pathobj.rglob(image_subdir_basename):
+        if not image_dir.is_dir():
+            continue
+
+        # The corresponding label directory should be a sibling to the image directory
+        label_dir = image_dir.parent / label_subdir_basename
+        
+        if label_dir.is_dir():
+            log.info(f"Found matching pair of data folders: '{image_dir.parent.name}'")
+            valid_label_dirs_for_class_scan.append(label_dir.resolve())
+            
+            # The rest of the logic for pairing files within the folders is the same
+            for ext in ['*.jpg', '*.jpeg', '*.png']:
+                for img_path in image_dir.glob(ext):
+                    label_path = label_dir / (img_path.stem + ".txt")
+                    if label_path.is_file():
+                        image_label_pairs.append((img_path.resolve(), label_path.resolve()))
+        else:
+            log.warning(f"Found an '{image_dir}' but no corresponding sibling directory named '{label_subdir_basename}'. Skipping.")
+
+    if not image_label_pairs:
+        log.warning(f"No image-label pairs were found after a recursive search in {inputs_dir_pathobj}.")
+        
+    return image_label_pairs, valid_label_dirs_for_class_scan
+
+
+def split_data(image_label_pairs, train_ratio, val_ratio, test_ratio, seed=42, logger_instance=None):
+    """Splits image-label pairs into train, validation, and test sets."""
+    random.seed(seed)
+    random.shuffle(image_label_pairs)
+    total = len(image_label_pairs)
+    train_end = int(total * train_ratio)
+    val_end = train_end + int(total * val_ratio)
+    return image_label_pairs[:train_end], image_label_pairs[train_end:val_end], image_label_pairs[val_end:]
+
+def get_unique_class_ids(list_of_label_dir_paths, logger_instance=None):
+    """Scans label files to find all unique class IDs."""
+    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
+    unique_ids = set()
+    for label_dir_path in list_of_label_dir_paths:
+        for label_file in label_dir_path.glob('*.txt'):
+            with open(label_file, 'r') as f:
+                for line in f:
+                    if parts := line.strip().split():
+                        unique_ids.add(int(parts[0]))
+    return sorted(list(unique_ids))
+
+def load_class_names_from_yaml(yaml_path_obj, logger_instance=None): # Renamed for clarity
+    """Loads the 'names' list from a YAML file."""
+    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
+    if not yaml_path_obj.is_file(): return None
+    try:
+        with open(yaml_path_obj, 'r') as f: data = yaml.safe_load(f)
+        return data.get('names') if isinstance(data.get('names'), list) else None
+    except Exception:
+        return None
+
+def create_yolo_dataset_yaml(dataset_root_abs_path_str, train_rel_img_dir_paths, val_rel_img_dir_paths,
+                        test_rel_img_dir_paths, class_names_map, num_classes_val,
+                        output_yaml_path_obj, image_subdir_basename, label_subdir_basename, logger_instance=None): # Renamed for clarity
+    """Creates the dataset.yaml file for YOLO training."""
+    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
+    names = [class_names_map.get(i, f"class_{i}") for i in range(num_classes_val)]
+    data = {
+        'path': dataset_root_abs_path_str,
+        'train': [str(p) for p in train_rel_img_dir_paths],
+        'val': [str(p) for p in val_rel_img_dir_paths],
+        'test': [str(p) for p in test_rel_img_dir_paths],
+        'nc': num_classes_val,
+        'names': names
+    }
+    output_yaml_path_obj.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_yaml_path_obj, 'w') as f: yaml.dump(data, f, sort_keys=False)
+    log.info(f"Successfully created dataset YAML: {output_yaml_path_obj}")
+
+def parse_yolo_annotations(label_file_path, logger_instance=None):
+    """Parses a YOLO format label file for detailed annotations."""
+    annotations = []
+    if Path(label_file_path).is_file():
+        with open(label_file_path, 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) == 5:
+                    annotations.append((int(parts[0]), *map(float, parts[1:])))
+    return annotations
+
+def plot_readable_confusion_matrix(matrix_data, class_names, output_path, title='Confusion Matrix'):
+    """
+    Generates and saves a readable confusion matrix plot using Seaborn.
+    Handles the case where the matrix includes an extra 'background' class.
+    """
+    logger = logging.getLogger('yolo_script_logger')
+    if matrix_data is None:
+        logger.warning("Confusion matrix data is None. Skipping plot generation.")
+        return
+
+    matrix_data_int = matrix_data.astype(int)
+    # Make a mutable copy of the provided class names
+    plot_labels = list(class_names)
+
+    # Check if the matrix dimensions are larger than the known class names
+    if matrix_data_int.shape[0] == len(plot_labels) + 1:
+        plot_labels.append('background')
+    
+    # Final check to prevent crash if dimensions are still mismatched
+    if matrix_data_int.shape[0] != len(plot_labels):
+        logger.error(
+            f"Shape mismatch for confusion matrix plot. Matrix is {matrix_data_int.shape}, "
+            f"but there are {len(plot_labels)} labels. Skipping plot."
+        )
+        return
+
+    df_cm = pd.DataFrame(matrix_data_int, index=plot_labels, columns=plot_labels)
+    
+    plt.figure(figsize=(12, 10))
+    heatmap = sns.heatmap(df_cm, annot=True, fmt='d', cmap='Blues', annot_kws={"size": 12})
+                          
+    heatmap.yaxis.set_ticklabels(heatmap.yaxis.get_ticklabels(), rotation=0, ha='right', fontsize=12)
+    heatmap.xaxis.set_ticklabels(heatmap.xaxis.get_ticklabels(), rotation=45, ha='right', fontsize=12)
+    
+    plt.ylabel('Predicted', fontsize=14)
+    plt.xlabel('True', fontsize=14)
+    plt.title(title, fontsize=16)
+    plt.tight_layout()
+    
+    try:
+        plt.savefig(output_path)
+        logger.info(f"Saved readable confusion matrix plot to: {output_path}")
+    except Exception as e:
+        logger.error(f"Failed to save confusion matrix plot to {output_path}: {e}")
+    finally:
+        plt.close()
+
+def draw_error_annotations(image_np, fp_predictions_to_draw, fn_gt_to_draw, class_names_map, config_module):
+    """Draws specified False Positive and False Negative boxes for error analysis."""
+    h, w, _ = image_np.shape
+    params = get_adaptive_drawing_params(w, config_module)
+    box_thickness = params['box_thickness']
+    text_thickness = params['text_thickness']
+    fp_font_scale = params['error_fp_font_scale']
+    fn_font_scale = params['error_fn_font_scale']
+    font = config_module.FONT_FACE
+    box_color_map = config_module.BOX_COLOR_MAP
+    default_box_color = config_module.DEFAULT_BOX_COLOR
+
+    # --- Draw False Positive Predicted Boxes ---
+    if fp_predictions_to_draw:
+        for pred_data in fp_predictions_to_draw:
+            x1, y1, x2, y2 = map(int, pred_data['xyxy'])
+            class_name = class_names_map.get(int(pred_data['cls']), f"ID_{int(pred_data['cls'])}")
+            label = f"FP: {class_name} {pred_data['conf']:.2f}"
+            color = box_color_map.get(class_name.lower().strip(), default_box_color)
+            
+            cv2.rectangle(image_np, (x1, y1), (x2, y2), color, box_thickness)
+            (text_w, text_h), _ = cv2.getTextSize(label, font, fp_font_scale, text_thickness)
+            cv2.rectangle(image_np, (x1, y1 - text_h - 5), (x1 + text_w, y1), color, -1)
+            cv2.putText(image_np, label, (x1, y1 - 5), font, fp_font_scale, (0,0,0), text_thickness)
+
+    # --- Draw Missed Ground Truth Boxes (False Negatives) ---
+    if fn_gt_to_draw:
+        for gt_data in fn_gt_to_draw:
+            x1, y1, x2, y2 = map(int, gt_data['xyxy'])
+            class_name = class_names_map.get(gt_data['cls'], f"ID_{gt_data['cls']}")
+            label = f"GT: {class_name}"
+            color = box_color_map.get(class_name.lower().strip(), default_box_color)
+
+            cv2.rectangle(image_np, (x1, y1), (x2, y2), color, box_thickness)
+            (text_w, text_h), _ = cv2.getTextSize(label, font, fn_font_scale, text_thickness)
+            cv2.rectangle(image_np, (x1, y2), (x1 + text_w, y2 + text_h + 5), color, -1)
+            cv2.putText(image_np, label, (x1, y2 + text_h + 5), font, fn_font_scale, (0,0,0), text_thickness)
+
+    return image_np
+
+def calculate_prf1(tp, fp, fn):
+    """
+    Calculates precision, recall, and F1-score from TP, FP, and FN counts.
+    This is a centralized utility function to avoid code duplication.
+    """
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+    return {'precision': precision, 'recall': recall, 'f1_score': f1_score}
+
+def _get_relative_path_for_yolo_yaml(pairs, inputs_dir):
+    """
+    Gets unique parent directories of images from pairs, relative to a base directory.
+    This is a helper for creating dataset.yaml files.
+    """
+    if not pairs:
+        return []
+    # Using a set to handle duplicates automatically
+    # The path is converted to a string for use in the YAML file
+    relative_dirs = {str(p[0].parent.relative_to(inputs_dir)) for p in pairs}
+    return sorted(list(relative_dirs))

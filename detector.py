@@ -2,13 +2,14 @@ from ultralytics import YOLO
 import cv2
 from pathlib import Path
 from bbox_utils import calculate_iou, calculate_aspect_ratio 
-import logging # Assuming logger might be useful inside the filter
-from utils import convert_to_3channel_grayscale 
+import logging
+from utils import convert_to_3channel_grayscale, get_adaptive_drawing_params
 import torch
 from torchvision.ops import nms
+import numpy as np
 
 class CoinDetector:
-    def __init__(self, model_path, class_names_map,
+    def __init__(self, model_path, class_names_map, config_module,
                  per_class_conf_thresholds=None,
                  default_conf_thresh=0.25,
                  iou_suppression_threshold=0.4,
@@ -23,16 +24,10 @@ class CoinDetector:
         self.model_path = Path(model_path)
         self.model = YOLO(self.model_path)
         self.class_names_map = class_names_map
+        self.config = config_module # Store the entire config module
         self.per_class_conf_thresholds = per_class_conf_thresholds or {}
         self.default_conf_thresh = default_conf_thresh
         self.iou_suppression_threshold = iou_suppression_threshold
-        # Store drawing parameters
-        self.box_color_map = box_color_map or {}
-        self.default_box_color = default_box_color
-        self.box_thickness = box_thickness
-        self.text_thickness = text_thickness
-        self.font_face = font_face
-        self.font_scale = font_scale
         self.enable_aspect_ratio_filter = enable_aspect_ratio_filter
         self.aspect_ratio_filter_threshold = aspect_ratio_filter_threshold
         self.enable_per_class_confidence = enable_per_class_confidence
@@ -46,29 +41,29 @@ class CoinDetector:
         If enabled and a class is not in per_class_conf_thresholds, it raises an error.
         If disabled, this method is skipped, and initial model.predict thresholding is used.
         """
-        if not self.enable_per_class_confidence: #
-            self.logger.info("Per-class confidence thresholding is disabled. Skipping this step.") #
-            return raw_predictions_data # Pass through data if feature is disabled
+        if not self.enable_per_class_confidence:
+            self.logger.info("Per-class confidence thresholding is disabled. Skipping this step.")
+            return raw_predictions_data
 
         thresholded_predictions = []
-        self.logger.info("Applying per-class confidence thresholds.") #
-        for pred_item in raw_predictions_data: #
-            class_name = self.class_names_map.get(pred_item['cls'], f"Unnamed_ID_{pred_item['cls']}").lower().strip() #
+        self.logger.info("Applying per-class confidence thresholds.")
+        for pred_item in raw_predictions_data:
+            class_name = self.class_names_map.get(pred_item['cls'], f"Unnamed_ID_{pred_item['cls']}").lower().strip()
             
-            if class_name not in self.per_class_conf_thresholds: #
-                raise KeyError( #
-                    f"Confidence threshold not defined for class '{class_name}' (ID: {pred_item['cls']}) " #
-                    f"in PER_CLASS_CONF_THRESHOLDS (config.py), but per-class confidence is enabled." #
+            if class_name not in self.per_class_conf_thresholds:
+                raise KeyError(
+                    f"Confidence threshold not defined for class '{class_name}' (ID: {pred_item['cls']}) "
+                    f"in PER_CLASS_CONF_THRESHOLDS (config.py), but per-class confidence is enabled."
                 )
-            conf_thresh_to_apply = self.per_class_conf_thresholds[class_name] #
+            conf_thresh_to_apply = self.per_class_conf_thresholds[class_name]
             
-            if pred_item['conf'] >= conf_thresh_to_apply: #
-                thresholded_predictions.append(pred_item) #
+            if pred_item['conf'] >= conf_thresh_to_apply:
+                thresholded_predictions.append(pred_item)
         
-        original_count = len(raw_predictions_data) #
-        retained_count = len(thresholded_predictions) #
-        if original_count > 0 : #
-            self.logger.info(f"Per-class confidence filtering: Retained {retained_count}/{original_count} predictions.") #
+        original_count = len(raw_predictions_data)
+        retained_count = len(thresholded_predictions)
+        if original_count > 0:
+            self.logger.info(f"Per-class confidence filtering: Retained {retained_count}/{original_count} predictions.")
         
         return thresholded_predictions
 
@@ -79,13 +74,13 @@ class CoinDetector:
 
         filtered_predictions = []
         for pred in predictions_data:
-            aspect_ratio = calculate_aspect_ratio(pred['xyxy']) #
+            aspect_ratio = calculate_aspect_ratio(pred['xyxy'])
 
-            if aspect_ratio == 0.0: # 
-                self.logger.debug(f"Skipping degenerate box (xyxy: {pred['xyxy']}) before aspect ratio check.") #
+            if aspect_ratio == 0.0:
+                self.logger.debug(f"Skipping degenerate box (xyxy: {pred['xyxy']}) before aspect ratio check.")
                 continue
 
-            if aspect_ratio <= self.aspect_ratio_filter_threshold: #
+            if aspect_ratio <= self.aspect_ratio_filter_threshold:
                 filtered_predictions.append(pred)
             else:
                 self.logger.debug(
@@ -132,13 +127,13 @@ class CoinDetector:
         self.logger.info("Starting custom post-processing pipeline...")
         
         # Apply confidence filtering (per-class or default)
-        processed_after_confidence = self._apply_per_class_confidence(raw_predictions_data) #
+        processed_after_confidence = self._apply_per_class_confidence(raw_predictions_data)
         
         # Apply aspect ratio filter (if enabled)
-        processed_after_aspect_ratio = self._apply_aspect_ratio_filter(processed_after_confidence) #
+        processed_after_aspect_ratio = self._apply_aspect_ratio_filter(processed_after_confidence)
 
         # Apply NMS (if enabled)
-        processed_after_nms = self._apply_custom_nms(processed_after_aspect_ratio) #
+        processed_after_nms = self._apply_custom_nms(processed_after_aspect_ratio)
         
         self.logger.info("Custom post-processing pipeline finished.")
         return processed_after_nms
@@ -163,14 +158,14 @@ class CoinDetector:
                 self.logger.error("Image preprocessing failed. Cannot proceed with prediction.")
                 return ([], []) if return_raw else []
         else:
-            preprocessed_image_np = image_np_or_path
+            preprocessed_image_np = image_np_or_path if isinstance(image_np_or_path, np.ndarray) else cv2.imread(str(image_np_or_path))
 
 
         # Model Prediction
 
         pred_results_list = self.model.predict(source=preprocessed_image_np, 
                                             save=False, 
-                                                verbose=False,
+                                            verbose=False,
                                             conf=self.default_conf_thresh)
        
         raw_predictions_data = []
@@ -198,18 +193,28 @@ class CoinDetector:
             return final_predictions 
 
     def draw_predictions_on_image(self, image_np, predictions_list):
-        """Draws final predictions on an image using configured settings."""
+        """Draws final predictions on an image using adaptive settings."""
         img_to_draw_on = image_np.copy()
+        h, w, _ = img_to_draw_on.shape
+        
+        # Get adaptive parameters based on the image width
+        params = get_adaptive_drawing_params(w, self.config)
+        box_thickness = params['box_thickness']
+        text_thickness = params['text_thickness']
+        font_scale = params['inference_font_scale']
+        font_face = self.config.FONT_FACE
+        color_map = self.config.BOX_COLOR_MAP
+        default_color = self.config.DEFAULT_BOX_COLOR
+
         for pred_data in predictions_list:
             x1, y1, x2, y2 = map(int, pred_data['xyxy'])
             class_name = pred_data['class_name']
             label = f"{class_name} {pred_data['conf']:.2f}"
-            color = self.box_color_map.get(class_name.lower().strip(), self.default_box_color)
+            color = color_map.get(class_name.lower().strip(), default_color)
 
-            # MODIFIED: Use stored drawing parameters
-            cv2.rectangle(img_to_draw_on, (x1, y1), (x2, y2), color, self.box_thickness)
-            (text_w, text_h), _ = cv2.getTextSize(label, self.font_face, self.font_scale, self.text_thickness)
+            cv2.rectangle(img_to_draw_on, (x1, y1), (x2, y2), color, box_thickness)
+            (text_w, text_h), _ = cv2.getTextSize(label, font_face, font_scale, text_thickness)
             cv2.rectangle(img_to_draw_on, (x1, y1 - text_h - 5), (x1 + text_w, y1), color, -1)
-            cv2.putText(img_to_draw_on, label, (x1, y1 - 5), self.font_face, self.font_scale, (0,0,0), self.text_thickness)
+            cv2.putText(img_to_draw_on, label, (x1, y1 - 5), font_face, font_scale, (0,0,0), text_thickness)
             
         return img_to_draw_on

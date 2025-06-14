@@ -4,11 +4,48 @@ import random
 import shutil
 import logging
 from pathlib import Path
-import cv2 # For drawing
-import numpy as np # For drawing
+import cv2
+import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+
+
+def get_adaptive_drawing_params(image_width, config_module):
+    """
+    Calculates drawing parameters scaled to the image size, based on a reference width.
+    """
+    # If adaptive drawing is disabled, return the base values from config
+    if not getattr(config_module, 'ADAPTIVE_DRAWING_ENABLED', False):
+        return {
+            "box_thickness": config_module.BOX_THICKNESS,
+            "text_thickness": config_module.TEXT_THICKNESS,
+            "inference_font_scale": config_module.INFERENCE_FONT_SCALE,
+            "error_fp_font_scale": config_module.ERROR_FP_FONT_SCALE,
+            "error_fn_font_scale": config_module.ERROR_FN_FONT_SCALE,
+        }
+    
+    # Calculate the scaling factor based on image width
+    reference_width = getattr(config_module, 'REFERENCE_IMAGE_WIDTH', 4000)
+    scaling_factor = image_width / reference_width
+
+    # Clip the scaling factor to prevent parameters from becoming too small on tiny images
+    scaling_factor = max(0.1, scaling_factor)
+
+    # Scale the parameters, ensuring thickness is at least 1
+    box_thickness = max(1, int(round(config_module.BOX_THICKNESS * scaling_factor)))
+    text_thickness = max(1, int(round(config_module.TEXT_THICKNESS * scaling_factor)))
+    inference_font_scale = config_module.INFERENCE_FONT_SCALE * scaling_factor
+    error_fp_font_scale = config_module.ERROR_FP_FONT_SCALE * scaling_factor
+    error_fn_font_scale = config_module.ERROR_FN_FONT_SCALE * scaling_factor
+
+    return {
+        "box_thickness": box_thickness,
+        "text_thickness": text_thickness,
+        "inference_font_scale": inference_font_scale,
+        "error_fp_font_scale": error_fp_font_scale,
+        "error_fn_font_scale": error_fn_font_scale,
+    }
 
 
 # Factory function for creating a detector 
@@ -31,23 +68,17 @@ def create_detector_from_config(model_path, class_map, config_module, logger):
     logger.info(f"Creating detector instance with model: {model_path_obj}")
     
     detector = CoinDetector(
-        model_path=model_path_obj, # Pass the Path object
+        model_path=model_path_obj,
         class_names_map=class_map,
+        config_module=config_module,  # Pass the entire config module
         per_class_conf_thresholds=config_module.PER_CLASS_CONF_THRESHOLDS,
         default_conf_thresh=config_module.DEFAULT_CONF_THRESHOLD,
         iou_suppression_threshold=config_module.IOU_SUPPRESSION_THRESHOLD,
-        box_color_map=config_module.BOX_COLOR_MAP,
-        default_box_color=config_module.DEFAULT_BOX_COLOR,
-        box_thickness=config_module.BOX_THICKNESS,
-        text_thickness=config_module.TEXT_THICKNESS,
-        font_face=config_module.FONT_FACE,
-        font_scale=config_module.INFERENCE_FONT_SCALE,
         enable_aspect_ratio_filter=config_module.ENABLE_ASPECT_RATIO_FILTER,
         aspect_ratio_filter_threshold=config_module.ASPECT_RATIO_FILTER_THRESHOLD,
         enable_per_class_confidence=config_module.ENABLE_PER_CLASS_CONFIDENCE,
         enable_custom_nms=config_module.ENABLE_CUSTOM_NMS,
         enable_grayscale_preprocessing_from_config=config_module.ENABLE_GRAYSCALE_PREPROCESSING
-    
     )
     return detector
 
@@ -101,7 +132,7 @@ def convert_to_3channel_grayscale(image_np_or_path, logger_instance=None):
 
 def draw_ground_truth_boxes(image_np, ground_truths_list, class_names_map, config_module):
     """
-    Draws ground truth bounding boxes on an image for visualization.
+    Draws ground truth bounding boxes on an image using adaptive settings.
 
     Args:
         image_np (np.ndarray): The image to draw on.
@@ -111,6 +142,12 @@ def draw_ground_truth_boxes(image_np, ground_truths_list, class_names_map, confi
         config_module (module): The configuration module for styling.
     """
     img_to_draw_on = image_np.copy()
+    h, w, _ = img_to_draw_on.shape
+    
+    params = get_adaptive_drawing_params(w, config_module)
+    box_thickness = params['box_thickness']
+    text_thickness = params['text_thickness']
+    font_scale = params['inference_font_scale']
     font = config_module.FONT_FACE
     box_color_map = config_module.BOX_COLOR_MAP
     default_box_color = config_module.DEFAULT_BOX_COLOR
@@ -122,11 +159,10 @@ def draw_ground_truth_boxes(image_np, ground_truths_list, class_names_map, confi
         label = f"GT: {class_name}"
         color = box_color_map.get(class_name.lower().strip(), default_box_color)
 
-        # Use drawing parameters from config
-        cv2.rectangle(img_to_draw_on, (x1, y1), (x2, y2), color, config_module.BOX_THICKNESS)
-        (text_w, text_h), _ = cv2.getTextSize(label, font, config_module.INFERENCE_FONT_SCALE, config_module.TEXT_THICKNESS)
+        cv2.rectangle(img_to_draw_on, (x1, y1), (x2, y2), color, box_thickness)
+        (text_w, text_h), _ = cv2.getTextSize(label, font, font_scale, text_thickness)
         cv2.rectangle(img_to_draw_on, (x1, y1 - text_h - 5), (x1 + text_w, y1), color, -1)
-        cv2.putText(img_to_draw_on, label, (x1, y1 - 5), font, config_module.INFERENCE_FONT_SCALE, (0,0,0), config_module.TEXT_THICKNESS)
+        cv2.putText(img_to_draw_on, label, (x1, y1 - 5), font, font_scale, (0,0,0), text_thickness)
         
     return img_to_draw_on
 
@@ -366,6 +402,12 @@ def plot_readable_confusion_matrix(matrix_data, class_names, output_path, title=
 
 def draw_error_annotations(image_np, fp_predictions_to_draw, fn_gt_to_draw, class_names_map, config_module):
     """Draws specified False Positive and False Negative boxes for error analysis."""
+    h, w, _ = image_np.shape
+    params = get_adaptive_drawing_params(w, config_module)
+    box_thickness = params['box_thickness']
+    text_thickness = params['text_thickness']
+    fp_font_scale = params['error_fp_font_scale']
+    fn_font_scale = params['error_fn_font_scale']
     font = config_module.FONT_FACE
     box_color_map = config_module.BOX_COLOR_MAP
     default_box_color = config_module.DEFAULT_BOX_COLOR
@@ -378,10 +420,10 @@ def draw_error_annotations(image_np, fp_predictions_to_draw, fn_gt_to_draw, clas
             label = f"FP: {class_name} {pred_data['conf']:.2f}"
             color = box_color_map.get(class_name.lower().strip(), default_box_color)
             
-            cv2.rectangle(image_np, (x1, y1), (x2, y2), color, config_module.BOX_THICKNESS)
-            (text_w, text_h), _ = cv2.getTextSize(label, font, config_module.ERROR_FP_FONT_SCALE, config_module.TEXT_THICKNESS)
+            cv2.rectangle(image_np, (x1, y1), (x2, y2), color, box_thickness)
+            (text_w, text_h), _ = cv2.getTextSize(label, font, fp_font_scale, text_thickness)
             cv2.rectangle(image_np, (x1, y1 - text_h - 5), (x1 + text_w, y1), color, -1)
-            cv2.putText(image_np, label, (x1, y1 - 5), font, config_module.ERROR_FP_FONT_SCALE, (0,0,0), config_module.TEXT_THICKNESS)
+            cv2.putText(image_np, label, (x1, y1 - 5), font, fp_font_scale, (0,0,0), text_thickness)
 
     # --- Draw Missed Ground Truth Boxes (False Negatives) ---
     if fn_gt_to_draw:
@@ -391,10 +433,10 @@ def draw_error_annotations(image_np, fp_predictions_to_draw, fn_gt_to_draw, clas
             label = f"GT: {class_name}"
             color = box_color_map.get(class_name.lower().strip(), default_box_color)
 
-            cv2.rectangle(image_np, (x1, y1), (x2, y2), color, config_module.BOX_THICKNESS)
-            (text_w, text_h), _ = cv2.getTextSize(label, font, config_module.ERROR_FN_FONT_SCALE, config_module.TEXT_THICKNESS)
+            cv2.rectangle(image_np, (x1, y1), (x2, y2), color, box_thickness)
+            (text_w, text_h), _ = cv2.getTextSize(label, font, fn_font_scale, text_thickness)
             cv2.rectangle(image_np, (x1, y2), (x1 + text_w, y2 + text_h + 5), color, -1)
-            cv2.putText(image_np, label, (x1, y2 + text_h + 5), font, config_module.ERROR_FN_FONT_SCALE, (0,0,0), config_module.TEXT_THICKNESS)
+            cv2.putText(image_np, label, (x1, y2 + text_h + 5), font, fn_font_scale, (0,0,0), text_thickness)
 
     return image_np
 
