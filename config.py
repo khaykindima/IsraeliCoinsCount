@@ -3,22 +3,26 @@ import cv2 # Import for font selection
 # --- Base Paths ---
 # Allow overriding the input directory via an environment variable for portability.
 # Fallback to the original hardcoded path if the env var is not set.
-INPUTS_DIR = "Data/CoinCount.v54"
+INPUTS_DIR = "Data/CoinCountv54_plus640size"
 
-    # Example expected structure for INPUTS_DIR:
-    # INPUTS_DIR/
-    #  ├── data.yaml (ORIGINAL_DATA_YAML_NAME)
-    #  ├── variant1/
-    #  │   ├── images/
-    #  │   │   └── img1.jpg
-    #  │   └── labels/
-    #  │       └── img1.txt
-    #  ├── variant2/
-    #  │   ├── images/
-    #  │   │   └── img2.jpg
-    #  │   └── labels/
-    #  │       └── img2.txt
-    #  └── ...
+# Example of a flexible, nested structure now supported:
+# The script will recursively find all sibling 'images' and 'labels' folders.
+# INPUTS_DIR/
+#  ├── data.yaml
+#  ├── session_1_daylight/
+#  │   ├── images/
+#  │   │   └── img1.jpg
+#  │   └── labels/
+#  │       └── img1.txt
+#  ├── session_2_indoor/
+#  │   ├── setup_A/
+#  │   │   ├── images/
+#  │   │   │   └── img2.jpg
+#  │   │   └── labels/
+#  │   │       └── img2.txt
+#  │   └── setup_B/
+#  │       └── ...
+#  └── ...
 OUTPUT_DIR = "experiment_results"     # Base directory for all outputs
 
 # --- Data Configuration ---

@@ -29,7 +29,7 @@ Here is an example of the model detecting and counting coins in an image:
 ## Key Features
 
 * **Config-Driven Workflows**: Almost all parameters are centralized in `config.py` for easy management of experiments.
-* **Flexible Data Handling**: Supports automatic data splitting by ratio or using pre-defined `train/valid/test` folders.
+* **Flexible Data Handling**: Supports automatic data splitting by ratio or using pre-defined `train/valid/test` folders. The script can also recursively discover `images`/`labels` folders in nested subdirectories.
 * **Advanced Post-Processing**: Includes a customizable pipeline to improve model accuracy by filtering predictions based on:
     * Per-class confidence thresholds.
     * Bounding box aspect ratio.
@@ -53,6 +53,8 @@ The best model to date, **`yolov8n_v5.pt`**, is recommended for direct evaluatio
 
 ## Project Structure
 
+The project will recursively find all sibling `images` and `labels` folders within the `INPUTS_DIR`.
+
 ```
 IsraeliCoinsCount/
 ├── BestModels/
@@ -60,28 +62,23 @@ IsraeliCoinsCount/
 ├── Data/
 │   └── CoinCount.v54/
 │       ├── data.yaml
-│       ├── train/
+│       ├── session_1_daylight/
 │       │   ├── images/
+│       │   │   └── img1.jpg
 │       │   └── labels/
-│       ├── valid/
-│       │   └── ...
-│       └── test/
-│           └── ...
+│       │       └── img1.txt
+│       └── session_2_indoor/
+│           └── setup_A/
+│               ├── images/
+│               │   └── img2.jpg
+│               └── labels/
+│                   └── img2.txt
 ├── README.md
 ├── .gitignore
-├── bbox_utils.py
 ├── config.py
-├── detector.py
-├── evaluate_model.py
-├── israelicoinscount.ipynb
-├── metrics_calculator.py
-├── preprocess_dataset.py
-├── run_inference.py
 ├── train.py
-├── ultralytics_wsl_env.yml
-├── ultralytics_win_env.yml
 ├── utils.py
-└── visualize_dataset.py
+└── ... (other project files)
 ```
 
 ## Setup and Installation

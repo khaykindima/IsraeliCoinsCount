@@ -133,10 +133,12 @@ def draw_ground_truth_boxes(image_np, ground_truths_list, class_names_map, confi
 def save_config_to_run_dir(run_dir_path, logger):
     """Copies config.py to the specified run directory for reproducibility."""
     try:
-        # Assuming config.py is in the project root directory where the script is run
-        config_source_path = Path("config.py")
+        # Build path relative to this utils.py file, not the current working directory
+        project_root = Path(__file__).parent
+        config_source_path = project_root / "config.py"
+
         if not config_source_path.exists():
-             logger.warning("config.py not found. Skipping save to run directory.")
+             logger.warning(f"config.py not found at expected path {config_source_path}. Skipping save.")
              return
 
         destination_path = Path(run_dir_path) / "config.py"
@@ -199,8 +201,8 @@ def validate_config_and_paths(config_module, mode, logger):
         is_valid = False
 
     # Validate data split ratios
-    if not (0.999 < config_module.TRAIN_RATIO + config_module.VAL_RATIO + config_module.TEST_RATIO < 1.001):
-        logger.error("Config Error: Data split ratios must sum to 1.0.")
+    if not config_module.USE_PREDEFINED_SPLITS and not (0.999 < config_module.TRAIN_RATIO + config_module.VAL_RATIO + config_module.TEST_RATIO < 1.001):
+        logger.error("Config Error: Data split ratios must sum to 1.0 when not using pre-defined splits.")
         is_valid = False
 
     # Validate paths/settings specific to the run mode
@@ -218,22 +220,42 @@ def validate_config_and_paths(config_module, mode, logger):
     return is_valid
 
 def discover_and_pair_image_labels(inputs_dir_pathobj, image_subdir_basename, label_subdir_basename, logger_instance=None):
-    """Scans subdirectories for image and label folders, and creates pairs."""
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
+    """
+    Recursively scans for image and label folders and creates pairs.
+    It looks for sibling folders with the specified base names (e.g., 'images' and 'labels').
+    """
+    log = logger_instance if logger_instance else logging.getLogger(__name__)
     image_label_pairs = []
     valid_label_dirs_for_class_scan = []
-    for variant_dir in inputs_dir_pathobj.iterdir():
-        if variant_dir.is_dir():
-            image_dir = variant_dir / image_subdir_basename
-            label_dir = variant_dir / label_subdir_basename
-            if image_dir.is_dir() and label_dir.is_dir():
-                valid_label_dirs_for_class_scan.append(label_dir.resolve())
-                for ext in ['*.jpg', '*.jpeg', '*.png']:
-                    for img_path in image_dir.glob(ext):
-                        label_path = label_dir / (img_path.stem + ".txt")
-                        if label_path.is_file():
-                            image_label_pairs.append((img_path.resolve(), label_path.resolve()))
+    
+    log.info(f"Recursively searching for '{image_subdir_basename}' folders within {inputs_dir_pathobj}...")
+
+    # Use rglob to find all directories named `image_subdir_basename` at any depth
+    for image_dir in inputs_dir_pathobj.rglob(image_subdir_basename):
+        if not image_dir.is_dir():
+            continue
+
+        # The corresponding label directory should be a sibling to the image directory
+        label_dir = image_dir.parent / label_subdir_basename
+        
+        if label_dir.is_dir():
+            log.info(f"Found matching pair of data folders: '{image_dir.parent.name}'")
+            valid_label_dirs_for_class_scan.append(label_dir.resolve())
+            
+            # The rest of the logic for pairing files within the folders is the same
+            for ext in ['*.jpg', '*.jpeg', '*.png']:
+                for img_path in image_dir.glob(ext):
+                    label_path = label_dir / (img_path.stem + ".txt")
+                    if label_path.is_file():
+                        image_label_pairs.append((img_path.resolve(), label_path.resolve()))
+        else:
+            log.warning(f"Found an '{image_dir}' but no corresponding sibling directory named '{label_subdir_basename}'. Skipping.")
+
+    if not image_label_pairs:
+        log.warning(f"No image-label pairs were found after a recursive search in {inputs_dir_pathobj}.")
+        
     return image_label_pairs, valid_label_dirs_for_class_scan
+
 
 def split_data(image_label_pairs, train_ratio, val_ratio, test_ratio, seed=42, logger_instance=None):
     """Splits image-label pairs into train, validation, and test sets."""

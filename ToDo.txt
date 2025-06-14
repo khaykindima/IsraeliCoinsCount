@@ -1,2 +1,3 @@
  - support different model, not only YOLO, from ultralytics
  - support not only ultralytics
+ - fit annoation size to the image size
