@@ -67,15 +67,20 @@ def main_train():
         finalize_and_exit(logger, main_log_file, None, f"An unexpected error occurred: {e}", final_log_suffix)
 
 def load_or_derive_class_names(label_dirs, logger):
-    """Loads class names from YAML, falling back to deriving them from labels."""
-    names_from_yaml = load_class_names_from_yaml(config.INPUTS_DIR / config.ORIGINAL_DATA_YAML_NAME, logger)
+    """Loads class names from the required YAML file or raises an error."""
+    # Use the new centralized class names file
+    class_names_path = Path(config.CLASS_NAMES_YAML)
+    names_from_yaml = load_class_names_from_yaml(class_names_path, logger)
+    
     if names_from_yaml is not None:
+        logger.info(f"Loaded class names from root file: {config.CLASS_NAMES_YAML}")
         return {i: str(name).strip() for i, name in enumerate(names_from_yaml)}, len(names_from_yaml)
-
-    logger.warning("Falling back to deriving class names from labels.")
-    unique_ids = get_unique_class_ids(label_dirs, logger)
-    num_classes = max(unique_ids) + 1 if unique_ids else 0
-    return {i: f"class_{i}" for i in range(num_classes)}, num_classes
+    else:
+        # If the file is not found, raise a critical error instead of falling back.
+        raise FileNotFoundError(
+            f"CRITICAL: The class names file '{config.CLASS_NAMES_YAML}' was not found in the project's root directory. "
+            f"This file is now required for all operations."
+        )
 
 def run_training_workflow(pairs, class_names_map, num_classes, main_log_file, logger):
     """Orchestrates the model training process."""

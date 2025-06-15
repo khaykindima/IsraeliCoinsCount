@@ -3,7 +3,7 @@ import cv2 # Import for font selection
 # --- Base Paths ---
 # Allow overriding the input directory via an environment variable for portability.
 # Fallback to the original hardcoded path if the env var is not set.
-INPUTS_DIR = "Data/CoinsCounter.v1i.yolov5pytorch"
+INPUTS_DIR = "Data/tmp"
 
 # Example of a flexible, nested structure now supported:
 # The script will recursively find all sibling 'images' and 'labels' folders.
@@ -29,6 +29,7 @@ OUTPUT_DIR = "experiment_results"     # Base directory for all outputs
 IMAGE_SUBDIR_BASENAME = "images"
 LABEL_SUBDIR_BASENAME = "labels"
 ORIGINAL_DATA_YAML_NAME = "data.yaml" # Name of your existing data.yaml with class names
+CLASS_NAMES_YAML = "classes_names.yaml" # Centralized file for class names
 # If True, the script will look for 'train/', 'valid/', 'test/' subfolders in INPUTS_DIR.
 # If False, it will split all data according to the ratios below.
 USE_PREDEFINED_SPLITS = False
@@ -100,6 +101,10 @@ ENABLE_ASPECT_RATIO_FILTER = True  # Set to True to enable, False to disable
 # A perfect square has a ratio of 1.0.
 ASPECT_RATIO_FILTER_THRESHOLD = 2.1
 
+# --- Cut-off Coin Detection ---
+ENABLE_CUT_OFF_CHECK = True
+# Defines how close a box edge needs to be to the image edge to be flagged (in pixels).
+CUT_OFF_TOLERANCE = 2
 # --- Drawing Configuration ---
 # Colors are in BGR format
 BOX_COLOR_MAP = {

@@ -237,7 +237,7 @@ def setup_inference():
         return logger, None, current_run_dir # Return dir even on validation fail for logs
 
     logger.info(f"--- Setting up the detector for inference in run directory: {current_run_dir} ---")
-    class_names_yaml_path = config.INPUTS_DIR / config.ORIGINAL_DATA_YAML_NAME
+    class_names_yaml_path = Path(config.CLASS_NAMES_YAML)
     names_from_yaml = load_class_names_from_yaml(class_names_yaml_path, logger)
     if names_from_yaml is None:
         logger.error(f"CRITICAL: Could not load class names from '{class_names_yaml_path}'.")

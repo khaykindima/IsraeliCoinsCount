@@ -13,8 +13,6 @@ class CoinDetector:
                  per_class_conf_thresholds=None,
                  default_conf_thresh=0.25,
                  iou_suppression_threshold=0.4,
-                 box_color_map=None, default_box_color=(255,0,0),
-                 box_thickness=2, text_thickness=2, font_face=cv2.FONT_HERSHEY_SIMPLEX, font_scale=1.0,
                  enable_aspect_ratio_filter=False, aspect_ratio_filter_threshold=2.5,
                  enable_per_class_confidence=True,
                  enable_custom_nms=True,
@@ -34,6 +32,10 @@ class CoinDetector:
         self.enable_custom_nms = enable_custom_nms
         self.logger = logging.getLogger(__name__) 
         self.enable_grayscale_preprocessing = enable_grayscale_preprocessing_from_config
+        
+        # Placeholders for current image dimensions
+        self.current_image_height = None
+        self.current_image_width = None
 
     def _apply_per_class_confidence(self, raw_predictions_data):
         """
@@ -66,6 +68,33 @@ class CoinDetector:
             self.logger.info(f"Per-class confidence filtering: Retained {retained_count}/{original_count} predictions.")
         
         return thresholded_predictions
+    
+    def _check_for_cut_off_coins(self, predictions_data):
+        """Logs a warning for any detected bounding box touching the image edges."""
+        if not self.config.ENABLE_CUT_OFF_CHECK:
+            return
+
+        if self.current_image_height is None or self.current_image_width is None:
+            self.logger.error("Image dimensions not set. Cannot check for cut-off coins.")
+            return
+
+        tolerance = self.config.CUT_OFF_TOLERANCE
+        for pred in predictions_data:
+            x1, y1, x2, y2 = pred['xyxy']
+            
+            is_cut_off = (
+                x1 <= tolerance or
+                y1 <= tolerance or
+                x2 >= self.current_image_width - tolerance or
+                y2 >= self.current_image_height - tolerance
+            )
+            
+            if is_cut_off:
+                class_name = self.class_names_map.get(pred['cls'], "Unknown")
+                self.logger.warning(
+                    f"Cut-off coin detected: A '{class_name.capitalize()}' coin is touching the image edge. "
+                    f"Its detection may be unreliable."
+                )
 
     def _apply_aspect_ratio_filter(self, predictions_data):
         """Filters predictions based on bounding box aspect ratio."""
@@ -126,17 +155,20 @@ class CoinDetector:
         """
         self.logger.info("Starting custom post-processing pipeline...")
         
-        # Apply confidence filtering (per-class or default)
-        processed_after_confidence = self._apply_per_class_confidence(raw_predictions_data)
+		# Step 1: Confidence Filtering
+        processed_data = self._apply_per_class_confidence(raw_predictions_data)
         
-        # Apply aspect ratio filter (if enabled)
-        processed_after_aspect_ratio = self._apply_aspect_ratio_filter(processed_after_confidence)
+        # Step 2: Check for Cut-off Coins (before filtering them out)
+        self._check_for_cut_off_coins(processed_data)
+        
+        # Step 3: Aspect Ratio Filtering
+        processed_data = self._apply_aspect_ratio_filter(processed_data)
 
-        # Apply NMS (if enabled)
-        processed_after_nms = self._apply_custom_nms(processed_after_aspect_ratio)
-        
+        # Step 4: Non-Maximum Suppression
+        processed_data = self._apply_custom_nms(processed_data)
         self.logger.info("Custom post-processing pipeline finished.")
-        return processed_after_nms
+		
+        return processed_data
 
     def predict(self, image_np_or_path, return_raw=False):
         """
@@ -160,9 +192,10 @@ class CoinDetector:
         else:
             preprocessed_image_np = image_np_or_path if isinstance(image_np_or_path, np.ndarray) else cv2.imread(str(image_np_or_path))
 
+        # Store current image dimensions for post-processing checks
+        self.current_image_height, self.current_image_width, _ = preprocessed_image_np.shape
 
         # Model Prediction
-
         pred_results_list = self.model.predict(source=preprocessed_image_np, 
                                             save=False, 
                                             verbose=False,

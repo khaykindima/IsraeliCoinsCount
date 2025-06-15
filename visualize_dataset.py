@@ -43,7 +43,7 @@ def main():
     logger.info(f"Output will be saved to: {output_dir}")
 
     # --- Step 1: Load Class Names ---
-    class_names_yaml_path = config.INPUTS_DIR / config.ORIGINAL_DATA_YAML_NAME
+    class_names_yaml_path = Path(config.CLASS_NAMES_YAML)
     names_from_yaml = load_class_names_from_yaml(class_names_yaml_path, logger)
     if names_from_yaml is None:
         logger.error(f"CRITICAL: Could not load class names from '{class_names_yaml_path}'. Exiting.")

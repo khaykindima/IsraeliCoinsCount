@@ -35,6 +35,7 @@ Here is an example of the model detecting and counting coins in an image:
     * Per-class confidence thresholds.
     * Bounding box aspect ratio.
     * Optimized Non-Maximum Suppression (NMS).
+    * **Edge Detection Warning**: Logs a warning for detected coins that touch the edge of the image, as their detection may be unreliable.
 * **In-Depth Evaluation**: The evaluation script generates a multi-sheet Excel report comparing model performance before and after the post-processing pipeline, providing deep insights into the model's behavior.
 * **Error Analysis**: Automatically saves images of incorrect predictions (False Positives and False Negatives) for visual inspection and debugging.
 * **Automated Cloud Workflow**: Includes a Kaggle notebook for automated setup, training, evaluation, and results packaging on cloud GPUs.
@@ -50,7 +51,7 @@ The dataset used for this project contains images of Israeli coins (1, 2, 5, and
 
 This repository includes a `BestModels/` directory containing several well-performing model weights.
 
-The best model to date, **`yolov8n_v5.pt`**, is recommended for direct evaluation and inference.
+The best model to date, **`yolov8n_v6.pt`**, is recommended for direct evaluation and inference.
 
 ## Project Structure
 
