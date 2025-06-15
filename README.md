@@ -237,7 +237,7 @@ Even though this model was trained to handle challenging conditions, to ensure t
 
 | Good Example                                                                                                     | Bad Example                                                                                                    |
 | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| <img src="https://github.com/khaykindima/IsraeliCoinsCount/blob/main/ReadmeImages/good_example_image.jpg?raw=true.jpg" width="350"> | <img src="https://github.com/khaykindima/IsraeliCoinsCount/blob/main/ReadmeImages/bad_example_image.jpg?raw=true.jpg" width="350"> |
+| <img src="https://github.com/khaykindima/IsraeliCoinsCount/blob/main/ReadmeImages/good_example_image.jpg?raw=true.jpg" width="350" height="350"> | <img src="https://github.com/khaykindima/IsraeliCoinsCount/blob/main/ReadmeImages/bad_example_image.jpg?raw=true.jpg" width="350" height="350"> |
 | *Even lighting, top-down view, coins separated, plain background.* | *Low lighting, blurred image, cut coins, busy background.* |
 
 ## Automated Kaggle Workflow
