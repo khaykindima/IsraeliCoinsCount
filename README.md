@@ -22,7 +22,7 @@ A comprehensive computer vision project to detect and classify Israeli coins (On
 Here is an example of the model detecting and counting coins in an image:
 
 <p align="center">
-  <img src="https://github.com/khaykindima/IsraeliCoinsCount/blob/main/demo_image.jpg?raw=true" alt="Demo Image" width="750">
+  <img src="https://github.com/khaykindima/IsraeliCoinsCount/blob/main/ReadmeImages/demo_image.jpg?raw=true" alt="Demo Image" width="750">
   <br>
   <em>A composite image showing the annotated detection<br>and the corresponding summary printed to the console.</em>
 </p>
@@ -237,7 +237,7 @@ Even though this model was trained to handle challenging conditions, to ensure t
 
 | Good Example                                                                                                     | Bad Example                                                                                                    |
 | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| <img src="URL_TO_YOUR_GOOD_EXAMPLE_IMAGE.jpg" width="350"> | <img src="URL_TO_YOUR_BAD_EXAMPLE_IMAGE.jpg" width="350"> |
+| <img src="https://github.com/khaykindima/IsraeliCoinsCount/blob/main/ReadmeImages/good_example_image.jpg?raw=true.jpg" width="350"> | <img src="Uhttps://github.com/khaykindima/IsraeliCoinsCount/blob/main/ReadmeImages/bad_example_image.jpg?raw=true.jpg" width="350"> |
 | *Even lighting, top-down view, coins separated, plain background.* | *Harsh shadows, angled view, overlapping coins, busy background.* |
 
 ## Automated Kaggle Workflow
