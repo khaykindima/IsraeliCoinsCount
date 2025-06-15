@@ -1,448 +1,256 @@
-import os
-import yaml
-import random
-import shutil
-import logging
-from pathlib import Path
-import cv2
-import numpy as np
-import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
+# Israeli Coins Detection and Counting
 
+![Python Version](https://img.shields.io/badge/python-3.11-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-def get_adaptive_drawing_params(image_width, config_module):
-    """
-    Calculates drawing parameters scaled to the image size, based on a reference width.
-    """
-    # If adaptive drawing is disabled, return the base values from config
-    if not getattr(config_module, 'ADAPTIVE_DRAWING_ENABLED', False):
-        return {
-            "box_thickness": config_module.BOX_THICKNESS,
-            "text_thickness": config_module.TEXT_THICKNESS,
-            "inference_font_scale": config_module.INFERENCE_FONT_SCALE,
-            "error_fp_font_scale": config_module.ERROR_FP_FONT_SCALE,
-            "error_fn_font_scale": config_module.ERROR_FN_FONT_SCALE,
-        }
+A comprehensive computer vision project to detect and classify Israeli coins (One, Two, Five, and Ten Shekels) using YOLOv8. The project includes a full pipeline from data preprocessing and training to in-depth model evaluation and inference.
+
+## Table of Contents
+- [Demo](#demo)
+- [Key Features](#key-features)
+- [Dataset](#dataset)
+- [Pre-trained Models](#pre-trained-models)
+- [Project Structure](#project-structure)
+- [Setup and Installation](#setup-and-installation)
+- [How to Use](#how-to-use)
+- [Image Acquisition Guidelines](#image-acquisition-guidelines)
+- [Automated Kaggle Workflow](#automated-kaggle-workflow)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Demo
+Here is an example of the model detecting and counting coins in an image:
+
+<p align="center">
+  <img src="https://github.com/khaykindima/IsraeliCoinsCount/blob/main/demo_image.jpg?raw=true" alt="Demo Image" width="750">
+  <br>
+  <em>A composite image showing the annotated detection<br>and the corresponding summary printed to the console.</em>
+</p>
+
+## Key Features
+
+* **Config-Driven Workflows**: Almost all parameters are centralized in `config.py` for easy management of experiments.
+* **Flexible Data Handling**: Supports automatic data splitting by ratio or using pre-defined `train/valid/test` folders. The script can also recursively discover `images`/`labels` folders in nested subdirectories.
+* **Advanced Post-Processing**: Includes a customizable pipeline to improve model accuracy by filtering predictions based on:
+    * Per-class confidence thresholds.
+    * Bounding box aspect ratio.
+    * Optimized Non-Maximum Suppression (NMS).
+* **In-Depth Evaluation**: The evaluation script generates a multi-sheet Excel report comparing model performance before and after the post-processing pipeline, providing deep insights into the model's behavior.
+* **Error Analysis**: Automatically saves images of incorrect predictions (False Positives and False Negatives) for visual inspection and debugging.
+* **Automated Cloud Workflow**: Includes a Kaggle notebook for automated setup, training, evaluation, and results packaging on cloud GPUs.
+* **Reproducible Environments**: Provides dedicated environment files (`ultralytics_wsl_env.yml` and `ultralytics_win_env.yml`) for reproducible setups on both Linux/WSL and native Windows.
+
+## Dataset
+
+The dataset used for this project contains images of Israeli coins (1, 2, 5, and 10 Shekels) and is publicly available on Kaggle.
+
+* **Dataset Link**: [Israeli Coins Dataset on Kaggle](https://www.kaggle.com/datasets/dimakhaykin/israelicoins)
+
+## Pre-trained Models
+
+This repository includes a `BestModels/` directory containing several well-performing model weights.
+
+The best model to date, **`yolov8n_v5.pt`**, is recommended for direct evaluation and inference. It achieves an F1-score of **0.9982** on the test set.
+
+## Project Structure
+
+The project will recursively find all sibling `images` and `labels` folders within the `INPUTS_DIR`.
+
+```
+IsraeliCoinsCount/
+├── BestModels/
+│   └── yolov8n_v5.pt
+├── Data/
+│   └── CoinCount.v54/
+│       ├── data.yaml
+│       ├── session_1_daylight/
+│       │   ├── images/
+│       │   │   └── img1.jpg
+│       │   └── labels/
+│       │       └── img1.txt
+│       └── session_2_indoor/
+│           └── setup_A/
+│               ├── images/
+│               │   └── img2.jpg
+│               └── labels/
+│                   └── img2.txt
+├── README.md
+├── .gitignore
+├── config.py
+├── train.py
+├── utils.py
+└── ... (other project files)
+```
+
+## Setup and Installation
+
+This project can be set up on either WSL (Linux) or native Windows. Please follow the instructions for your specific operating system.
+
+### For WSL (Linux) Users (Recommended)
+
+1.  **Clone the Repository**
+    ```bash
+    git clone [https://github.com/khaykindima/IsraeliCoinsCount.git](https://github.com/khaykindima/IsraeliCoinsCount.git)
+    cd IsraeliCoinsCount
+    ```
+2.  **Create and Activate Conda Environment**
+    ```bash
+    # Create the environment from the WSL file
+    conda env create -f ultralytics_wsl_env.yml
+
+    # Activate the new environment
+    conda activate ultralytics_wsl_env
+    ```
+
+### For Native Windows Users
+
+The setup for native Windows requires a few extra steps after creating the base environment.
+
+1.  **Clone the Repository**
+    ```powershell
+    git clone [https://github.com/khaykindima/IsraeliCoinsCount.git](https://github.com/khaykindima/IsraeliCoinsCount.git)
+    cd IsraeliCoinsCount
+    ```
+2.  **Create the Base Conda Environment**
+    ```powershell
+    # Create the environment from the Windows file
+    conda env create -f ultralytics_win_env.yml
+    ```
+3.  **Activate the Environment**
+    ```powershell
+    conda activate ultralytics_win_env
+    ```
+4.  **Install PyTorch Manually**
     
-    # Calculate the scaling factor based on image width
-    reference_width = getattr(config_module, 'REFERENCE_IMAGE_WIDTH', 4000)
-    scaling_factor = image_width / reference_width
+    PyTorch must be installed separately to ensure the correct version for your hardware is used. Run **one** of the following commands in your activated terminal.
 
-    # Clip the scaling factor to prevent parameters from becoming too small on tiny images
-    scaling_factor = max(0.4, scaling_factor)
-
-    # Scale the parameters, ensuring thickness is at least 1
-    box_thickness = max(1, int(round(config_module.BOX_THICKNESS * scaling_factor)))
-    text_thickness = max(1, int(round(config_module.TEXT_THICKNESS * scaling_factor)))
-    inference_font_scale = config_module.INFERENCE_FONT_SCALE * scaling_factor
-    error_fp_font_scale = config_module.ERROR_FP_FONT_SCALE * scaling_factor
-    error_fn_font_scale = config_module.ERROR_FN_FONT_SCALE * scaling_factor
-
-    return {
-        "box_thickness": box_thickness,
-        "text_thickness": text_thickness,
-        "inference_font_scale": inference_font_scale,
-        "error_fp_font_scale": error_fp_font_scale,
-        "error_fn_font_scale": error_fn_font_scale,
-    }
-
-
-# Factory function for creating a detector 
-def create_detector_from_config(model_path, class_map, config_module, logger):
-    """
-    Creates a fully configured CoinDetector instance from config.
-    """
-	
-    from detector import CoinDetector
-	
-    model_path_obj = Path(model_path)
-    logger.info(f"Creating detector instance with model: {model_path_obj}")
+    * **If you have an NVIDIA GPU:**
+        ```powershell
+        pip install torch torchvision torchaudio --index-url [https://download.pytorch.org/whl/cu121](https://download.pytorch.org/whl/cu121)
+        ```
+    * **If you do NOT have an NVIDIA GPU (CPU only):**
+        ```powershell
+        pip install torch torchvision torchaudio
+        ```
+5.  **Install ultralytics-thop Manually**
     
-    detector = CoinDetector(
-        model_path=model_path_obj,
-        class_names_map=class_map,
-        config_module=config_module,  # Pass the entire config module
-        per_class_conf_thresholds=config_module.PER_CLASS_CONF_THRESHOLDS,
-        default_conf_thresh=config_module.DEFAULT_CONF_THRESHOLD,
-        iou_suppression_threshold=config_module.IOU_SUPPRESSION_THRESHOLD,
-        enable_aspect_ratio_filter=config_module.ENABLE_ASPECT_RATIO_FILTER,
-        aspect_ratio_filter_threshold=config_module.ASPECT_RATIO_FILTER_THRESHOLD,
-        enable_per_class_confidence=config_module.ENABLE_PER_CLASS_CONFIDENCE,
-        enable_custom_nms=config_module.ENABLE_CUSTOM_NMS,
-        enable_grayscale_preprocessing_from_config=config_module.ENABLE_GRAYSCALE_PREPROCESSING
-    )
-    return detector
+    This package is also required and must be installed separately.
+    ```powershell
+    python -m pip install ultralytics-thop>=2.0.0
+    ```
 
-def convert_to_3channel_grayscale(image_np_or_path, logger_instance=None):
-    """
-    Loads an image if a path is given, converts it to grayscale,
-    and then converts the grayscale image to a 3-channel BGR format.
-    """
-    log = logger_instance if logger_instance else logging.getLogger(__name__)
+## How to Use
 
-    log.debug(f"Starting image preprocessing for input: {type(image_np_or_path)}")
-    image_np = None
-    if isinstance(image_np_or_path, (str, Path)):
-        if not Path(image_np_or_path).exists():
-            log.error(f"Image path does not exist: {image_np_or_path}")
-            return None
-        image_np = cv2.imread(str(image_np_or_path))
-        if image_np is None:
-            log.error(f"Failed to load image from path: {image_np_or_path}")
-            return None
-        log.debug(f"Successfully loaded image from path: {image_np_or_path}")
-    elif isinstance(image_np_or_path, np.ndarray):
-        image_np = image_np_or_path.copy() 
-        log.debug("Processing image from NumPy array.")
-    else:
-        log.error(f"Invalid image input type: {type(image_np_or_path)}")
-        return None
+Once your environment is set up and activated, all workflows are controlled by `config.py`.
 
-    if image_np.size == 0:
-        log.error("Input image array is empty.")
-        return None
+### 1. Configuration (`config.py`)
 
-    if image_np.ndim == 2 or (image_np.ndim == 3 and image_np.shape[2] == 1):
-        log.debug("Image appears to be already grayscale or has only one channel.")
-        gray_image_np = image_np if image_np.ndim == 2 else image_np[:,:,0]
-    elif image_np.ndim == 3 and image_np.shape[2] == 3: 
-        gray_image_np = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
-        log.debug("Converted BGR image to grayscale.")
-    elif image_np.ndim == 3 and image_np.shape[2] == 4: 
-        log.debug("Input image has 4 channels (e.g., BGRA). Converting to BGR first.")
-        bgr_image_np = cv2.cvtColor(image_np, cv2.COLOR_BGRA2BGR)
-        gray_image_np = cv2.cvtColor(bgr_image_np, cv2.COLOR_BGR2GRAY)
-        log.debug("Converted 4-channel image to grayscale.")
-    else:
-        log.error(f"Unsupported image format/dimensions: {image_np.shape}")
-        return None
-            
-    image_for_model = cv2.cvtColor(gray_image_np, cv2.COLOR_GRAY2BGR)
-    log.debug("Converted grayscale image to 3-channel BGR for model input. Preprocessing finished.")
-    return image_for_model
+* `INPUTS_DIR`: Set the path to your dataset folder.
+* `OUTPUT_DIR`: Set the path where all outputs (logs, models, reports) will be saved (default is `experiment_results`).
+* `MODEL_PATH_FOR_PREDICTION`: Point this to the model file (`.pt`) you want to evaluate or use for inference.
+* `EPOCHS`: This is the master switch.
+    * Set to `> 0` to run the **training** workflow.
+    * Set to `0` to run the **evaluation** workflow.
 
-def draw_ground_truth_boxes(image_np, ground_truths_list, class_names_map, config_module):
-    """
-    Draws ground truth bounding boxes on an image using adaptive settings.
-    """
-    img_to_draw_on = image_np.copy()
-    h, w, _ = img_to_draw_on.shape
-    
-    params = get_adaptive_drawing_params(w, config_module)
-    box_thickness = params['box_thickness']
-    text_thickness = params['text_thickness']
-    font_scale = params['inference_font_scale']
-    font = config_module.FONT_FACE
-    box_color_map = config_module.BOX_COLOR_MAP
-    default_box_color = config_module.DEFAULT_BOX_COLOR
-    
-    for gt_data in ground_truths_list:
-        x1, y1, x2, y2 = map(int, gt_data['xyxy'])
-        class_id = gt_data['cls']
-        class_name = class_names_map.get(class_id, f"ID_{class_id}")
-        label = f"GT: {class_name}"
-        color = box_color_map.get(class_name.lower().strip(), default_box_color)
+### 2. Training a New Model
 
-        cv2.rectangle(img_to_draw_on, (x1, y1), (x2, y2), color, box_thickness)
-        (text_w, text_h), _ = cv2.getTextSize(label, font, font_scale, text_thickness)
-        cv2.rectangle(img_to_draw_on, (x1, y1 - text_h - 5), (x1 + text_w, y1), color, -1)
-        cv2.putText(img_to_draw_on, label, (x1, y1 - 5), font, font_scale, (0,0,0), text_thickness)
-        
-    return img_to_draw_on
+1.  In `config.py`, set `EPOCHS` to a number greater than 0 (e.g., `EPOCHS = 50`).
+2.  Specify the base model to use for training in `MODEL_NAME_FOR_TRAINING`.
+3.  Run the training script:
+    ```bash
+    python train.py
+    ```
+    All outputs will be saved in a unique folder inside `experiment_results/training_runs/`.
 
-def save_config_to_run_dir(run_dir_path, logger):
-    """Copies config.py to the specified run directory for reproducibility."""
-    try:
-        # Build path relative to this utils.py file, not the current working directory
-        project_root = Path(__file__).parent
-        config_source_path = project_root / "config.py"
+### 3. Evaluating an Existing Model
 
-        if not config_source_path.exists():
-             logger.warning(f"config.py not found at expected path {config_source_path}. Skipping save.")
-             return
+1.  In `config.py`, set `EPOCHS = 0`.
+2.  Set `MODEL_PATH_FOR_PREDICTION` to the path of your trained model (e.g., `BestModels/yolov8n_v5.pt`).
+3.  Run the script:
+    ```bash
+    python train.py
+    ```
+    A unique evaluation folder will be created in `experiment_results/direct_evaluation_runs/`.
 
-        destination_path = Path(run_dir_path) / "config.py"
-        shutil.copy2(config_source_path, destination_path)
-        logger.info(f"Saved a copy of the configuration to {destination_path}")
-    except Exception as e:
-        logger.error(f"Could not save config.py to run directory: {e}")
+### 4. Running Inference on New Images
 
+1.  Run the inference script from the command line, providing a path to an image or a folder.
+    ```bash
+    # Run on a single image
+    python run_inference.py /path/to/your/image.jpg
 
-# --- Logger Setup ---
-LOG_FORMATTER = logging.Formatter('%(asctime)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s')
+    # Run on a folder of images and export results to Excel
+    python run_inference.py /path/to/your/folder/ --export_excel
+    ```
+    Annotated images and other outputs will be saved in `experiment_results/inference_runs/`.
 
-def setup_logging(log_file_path_obj, logger_name='yolo_script_logger'): # Changed default logger name
-    """Configures logging to both console and a file for a given logger."""
-    logger = logging.getLogger(logger_name)
-    
-    if logger.handlers: 
-        for handler in logger.handlers[:]:
-            logger.removeHandler(handler)
-            handler.close()
+2.  For each image, a summary of detected coins and their total value will be printed to the console.
 
-    logger.setLevel(logging.INFO)
-    file_handler = logging.FileHandler(log_file_path_obj, mode='w')
-    file_handler.setFormatter(LOG_FORMATTER)
-    logger.addHandler(file_handler)
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(LOG_FORMATTER)
-    logger.addHandler(stream_handler)
-    
-    logger.info(f"Logging for '{logger_name}' initialized. File output to: {log_file_path_obj}")
-    return logger
+    **Example Output:**
+    ```
+    INFO: --- Summary for your_image_name.jpg ---
+    INFO: Detections: 2x One, 3x Two, 1x Five, 6x Ten
+    INFO: Total Sum: 73 Shekels
+    INFO: -----------------------------------------
+    ```
 
-def copy_log_to_run_directory(initial_log_path, run_dir_path, target_log_filename, logger_instance=None):
-    """Copies the log file to the specified run directory."""
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
-    if run_dir_path and initial_log_path.exists():
-        destination_log_path = Path(run_dir_path) / target_log_filename
-        shutil.copy2(initial_log_path, destination_log_path) 
-        log.info(f"Log file copied to: {destination_log_path}")
+### 5. Utility Scripts
 
-# --- Centralized function for creating unique run directories ---
-def create_unique_run_dir(base_dir_pathobj, run_name_prefix):
-    """Creates a unique run directory by appending a counter."""
-    candidate_dir = base_dir_pathobj / run_name_prefix
-    counter = 1
-    while candidate_dir.exists():
-        candidate_dir = base_dir_pathobj / f"{run_name_prefix}{counter}"
-        counter += 1
-    candidate_dir.mkdir(parents=True, exist_ok=False)
-    return candidate_dir
+* **Verify Annotations**: Check your ground truth labels by running `visualize_dataset.py`.
+    ```bash
+    # Visualize a random sample of 10 images
+    python visualize_dataset.py --num_images 10
+    ```
+* **Preprocess Dataset**: To convert your entire dataset to grayscale, enable it in `config.py` and run:
+    ```bash
+    python preprocess_dataset.py
+    ```
 
-def validate_config_and_paths(config_module, mode, logger):
-    """Validates key settings from the config module based on the run mode."""
-    is_valid = True
-    logger.info("--- Validating Configuration ---")
+## Image Acquisition Guidelines
 
-    # Validate INPUTS_DIR
-    if not config_module.INPUTS_DIR.exists():
-        logger.error(f"Config Error: INPUTS_DIR does not exist at '{config_module.INPUTS_DIR}'.")
-        is_valid = False
+Even though this model was trained to handle challenging conditions, to ensure the most accurate results, please follow the image acquisition guidelines below.
 
-    # Validate data split ratios
-    if not config_module.USE_PREDEFINED_SPLITS and not (0.999 < config_module.TRAIN_RATIO + config_module.VAL_RATIO + config_module.TEST_RATIO < 1.001):
-        logger.error("Config Error: Data split ratios must sum to 1.0 when not using pre-defined splits.")
-        is_valid = False
+### 1. Lighting is Crucial
+* **DO** use bright, diffuse, and even lighting to illuminate all coins clearly.
+* **DO** ensure the photo is bright enough. Dark or underexposed images hide important features.
+* **DON'T** use direct, harsh light (like a flashlight or direct sun) that creates strong shadows or reflective glare on the coins.
 
-    # Validate paths/settings specific to the run mode
-    if mode in ['evaluate', 'inference', 'train_direct_eval']:
-        model_path_str = config_module.MODEL_PATH_FOR_PREDICTION
-        model_path_obj = Path(model_path_str) # Convert to Path for validation
-        if not model_path_obj.exists():
-            logger.error(f"Config Error: MODEL_PATH_FOR_PREDICTION does not exist at '{model_path_str}'.")
-            is_valid = False
+### 2. Use a Simple, Contrasting Background
+* **DO** place coins on a plain, solid-colored, non-reflective surface that contrasts with the coins (e.g., a dark matte paper for light-colored coins).
+* **DON'T** use busy, patterned, or textured backgrounds like wood grain, floral tablecloths, or reflective surfaces.
 
-    if mode == 'train' and config_module.EPOCHS <= 0:
-        logger.error(f"Config Error: EPOCHS must be > 0 for training, but is {config_module.EPOCHS}.")
-        is_valid = False
+### 3. Camera Angle Matters
+* **DO** shoot from directly above the coins (a top-down, "bird's-eye" view). Keep the camera parallel to the surface.
+* **DON'T** take pictures from a sharp angle. This distorts the shape of the coins, making them appear as ovals, which can confuse the model.
 
-    return is_valid
+### 4. Keep Coins Separated
+* **DO** spread the coins out so they are not touching or are only slightly overlapping.
+* **DON'T** pile coins on top of each other. The model cannot detect coins that are heavily obscured.
 
-def discover_and_pair_image_labels(inputs_dir_pathobj, image_subdir_basename, label_subdir_basename, logger_instance=None):
-    """
-    Recursively scans for image and label folders and creates pairs.
-    It looks for sibling folders with the specified base names (e.g., 'images' and 'labels').
-    """
-    log = logger_instance if logger_instance else logging.getLogger(__name__)
-    image_label_pairs = []
-    valid_label_dirs_for_class_scan = []
-    
-    log.info(f"Recursively searching for '{image_subdir_basename}' folders within {inputs_dir_pathobj}...")
+### 5. Ensure Good Focus and Resolution
+* **DO** make sure the image is sharp and in focus. The details on the coin face are important for classification.
+* **DON'T** use blurry or low-resolution photos where the coins are small or indistinct.
 
-    # Use rglob to find all directories named `image_subdir_basename` at any depth
-    for image_dir in inputs_dir_pathobj.rglob(image_subdir_basename):
-        if not image_dir.is_dir():
-            continue
+### 6. Frame Your Shot
+* **DO** make sure all coins are fully inside the picture frame.
+* **DON'T** let coins get cut off by the edges of the photo.
 
-        # The corresponding label directory should be a sibling to the image directory
-        label_dir = image_dir.parent / label_subdir_basename
-        
-        if label_dir.is_dir():
-            log.info(f"Found matching pair of data folders: '{image_dir.parent.name}'")
-            valid_label_dirs_for_class_scan.append(label_dir.resolve())
-            
-            # The rest of the logic for pairing files within the folders is the same
-            for ext in ['*.jpg', '*.jpeg', '*.png']:
-                for img_path in image_dir.glob(ext):
-                    label_path = label_dir / (img_path.stem + ".txt")
-                    if label_path.is_file():
-                        image_label_pairs.append((img_path.resolve(), label_path.resolve()))
-        else:
-            log.warning(f"Found an '{image_dir}' but no corresponding sibling directory named '{label_subdir_basename}'. Skipping.")
+| Good Example                                                                                                     | Bad Example                                                                                                    |
+| ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| <img src="URL_TO_YOUR_GOOD_EXAMPLE_IMAGE.jpg" width="350"> | <img src="URL_TO_YOUR_BAD_EXAMPLE_IMAGE.jpg" width="350"> |
+| *Even lighting, top-down view, coins separated, plain background.* | *Harsh shadows, angled view, overlapping coins, busy background.* |
 
-    if not image_label_pairs:
-        log.warning(f"No image-label pairs were found after a recursive search in {inputs_dir_pathobj}.")
-        
-    return image_label_pairs, valid_label_dirs_for_class_scan
+## Automated Kaggle Workflow
 
+The `israelicoinscount.ipynb` notebook automates the **training and evaluation processes** on the Kaggle platform.
 
-def split_data(image_label_pairs, train_ratio, val_ratio, test_ratio, seed=42, logger_instance=None):
-    """Splits image-label pairs into train, validation, and test sets."""
-    random.seed(seed)
-    random.shuffle(image_label_pairs)
-    total = len(image_label_pairs)
-    train_end = int(total * train_ratio)
-    val_end = train_end + int(total * val_ratio)
-    return image_label_pairs[:train_end], image_label_pairs[train_end:val_end], image_label_pairs[val_end:]
+1.  **Upload**: Upload the notebook to Kaggle.
+2.  **Add Data**: Attach the coin dataset to the notebook.
+3.  **Add Secret**: Add your GitHub Personal Access Token (PAT) as a Kaggle Secret with the label `GITHUB_PAT_ISRAELICOINS`.
+4.  **Run All**: The notebook will automatically clone the repository, install dependencies, configure the project, and run the main `train.py` script.
 
-def get_unique_class_ids(list_of_label_dir_paths, logger_instance=None):
-    """Scans label files to find all unique class IDs."""
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
-    unique_ids = set()
-    for label_dir_path in list_of_label_dir_paths:
-        for label_file in label_dir_path.glob('*.txt'):
-            with open(label_file, 'r') as f:
-                for line in f:
-                    if parts := line.strip().split():
-                        unique_ids.add(int(parts[0]))
-    return sorted(list(unique_ids))
+## Contributing
+Contributions are welcome! If you have suggestions for improvements, please open an issue or submit a pull request.
 
-def load_class_names_from_yaml(yaml_path_obj, logger_instance=None): # Renamed for clarity
-    """Loads the 'names' list from a YAML file."""
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
-    if not yaml_path_obj.is_file(): return None
-    try:
-        with open(yaml_path_obj, 'r') as f: data = yaml.safe_load(f)
-        return data.get('names') if isinstance(data.get('names'), list) else None
-    except Exception:
-        return None
-
-def create_yolo_dataset_yaml(dataset_root_abs_path_str, train_rel_img_dir_paths, val_rel_img_dir_paths,
-                        test_rel_img_dir_paths, class_names_map, num_classes_val,
-                        output_yaml_path_obj, image_subdir_basename, label_subdir_basename, logger_instance=None): # Renamed for clarity
-    """Creates the dataset.yaml file for YOLO training."""
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
-    names = [class_names_map.get(i, f"class_{i}") for i in range(num_classes_val)]
-    data = {
-        'path': dataset_root_abs_path_str,
-        'train': [str(p) for p in train_rel_img_dir_paths],
-        'val': [str(p) for p in val_rel_img_dir_paths],
-        'test': [str(p) for p in test_rel_img_dir_paths],
-        'nc': num_classes_val,
-        'names': names
-    }
-    output_yaml_path_obj.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_yaml_path_obj, 'w') as f: yaml.dump(data, f, sort_keys=False)
-    log.info(f"Successfully created dataset YAML: {output_yaml_path_obj}")
-
-def parse_yolo_annotations(label_file_path, logger_instance=None):
-    """Parses a YOLO format label file for detailed annotations."""
-    annotations = []
-    if Path(label_file_path).is_file():
-        with open(label_file_path, 'r') as f:
-            for line in f:
-                parts = line.strip().split()
-                if len(parts) == 5:
-                    annotations.append((int(parts[0]), *map(float, parts[1:])))
-    return annotations
-
-def plot_readable_confusion_matrix(matrix_data, class_names, output_path, title='Confusion Matrix'):
-    """
-    Generates and saves a readable confusion matrix plot using Seaborn.
-    Handles the case where the matrix includes an extra 'background' class.
-    """
-    logger = logging.getLogger('yolo_script_logger')
-    if matrix_data is None:
-        logger.warning("Confusion matrix data is None. Skipping plot generation.")
-        return
-
-    matrix_data_int = matrix_data.astype(int)
-    # Make a mutable copy of the provided class names
-    plot_labels = list(class_names)
-
-    # Check if the matrix dimensions are larger than the known class names
-    if matrix_data_int.shape[0] == len(plot_labels) + 1:
-        plot_labels.append('background')
-    
-    # Final check to prevent crash if dimensions are still mismatched
-    if matrix_data_int.shape[0] != len(plot_labels):
-        logger.error(
-            f"Shape mismatch for confusion matrix plot. Matrix is {matrix_data_int.shape}, "
-            f"but there are {len(plot_labels)} labels. Skipping plot."
-        )
-        return
-
-    df_cm = pd.DataFrame(matrix_data_int, index=plot_labels, columns=plot_labels)
-    
-    plt.figure(figsize=(12, 10))
-    heatmap = sns.heatmap(df_cm, annot=True, fmt='d', cmap='Blues', annot_kws={"size": 12})
-                          
-    heatmap.yaxis.set_ticklabels(heatmap.yaxis.get_ticklabels(), rotation=0, ha='right', fontsize=12)
-    heatmap.xaxis.set_ticklabels(heatmap.xaxis.get_ticklabels(), rotation=45, ha='right', fontsize=12)
-    
-    plt.ylabel('Predicted', fontsize=14)
-    plt.xlabel('True', fontsize=14)
-    plt.title(title, fontsize=16)
-    plt.tight_layout()
-    
-    try:
-        plt.savefig(output_path)
-        logger.info(f"Saved readable confusion matrix plot to: {output_path}")
-    except Exception as e:
-        logger.error(f"Failed to save confusion matrix plot to {output_path}: {e}")
-    finally:
-        plt.close()
-
-def draw_error_annotations(image_np, fp_predictions_to_draw, fn_gt_to_draw, class_names_map, config_module):
-    """Draws specified False Positive and False Negative boxes for error analysis."""
-    h, w, _ = image_np.shape
-    params = get_adaptive_drawing_params(w, config_module)
-    box_thickness = params['box_thickness']
-    text_thickness = params['text_thickness']
-    fp_font_scale = params['error_fp_font_scale']
-    fn_font_scale = params['error_fn_font_scale']
-    font = config_module.FONT_FACE
-    box_color_map = config_module.BOX_COLOR_MAP
-    default_box_color = config_module.DEFAULT_BOX_COLOR
-
-    # --- Draw False Positive Predicted Boxes ---
-    if fp_predictions_to_draw:
-        for pred_data in fp_predictions_to_draw:
-            x1, y1, x2, y2 = map(int, pred_data['xyxy'])
-            class_name = class_names_map.get(int(pred_data['cls']), f"ID_{int(pred_data['cls'])}")
-            label = f"FP: {class_name} {pred_data['conf']:.2f}"
-            color = box_color_map.get(class_name.lower().strip(), default_box_color)
-            
-            cv2.rectangle(image_np, (x1, y1), (x2, y2), color, box_thickness)
-            (text_w, text_h), _ = cv2.getTextSize(label, font, fp_font_scale, text_thickness)
-            cv2.rectangle(image_np, (x1, y1 - text_h - 5), (x1 + text_w, y1), color, -1)
-            cv2.putText(image_np, label, (x1, y1 - 5), font, fp_font_scale, (0,0,0), text_thickness)
-
-    # --- Draw Missed Ground Truth Boxes (False Negatives) ---
-    if fn_gt_to_draw:
-        for gt_data in fn_gt_to_draw:
-            x1, y1, x2, y2 = map(int, gt_data['xyxy'])
-            class_name = class_names_map.get(gt_data['cls'], f"ID_{gt_data['cls']}")
-            label = f"GT: {class_name}"
-            color = box_color_map.get(class_name.lower().strip(), default_box_color)
-
-            cv2.rectangle(image_np, (x1, y1), (x2, y2), color, box_thickness)
-            (text_w, text_h), _ = cv2.getTextSize(label, font, fn_font_scale, text_thickness)
-            cv2.rectangle(image_np, (x1, y2), (x1 + text_w, y2 + text_h + 5), color, -1)
-            cv2.putText(image_np, label, (x1, y2 + text_h + 5), font, fn_font_scale, (0,0,0), text_thickness)
-
-    return image_np
-
-def calculate_prf1(tp, fp, fn):
-    """
-    Calculates precision, recall, and F1-score from TP, FP, and FN counts.
-    This is a centralized utility function to avoid code duplication.
-    """
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-    return {'precision': precision, 'recall': recall, 'f1_score': f1_score}
-
-def _get_relative_path_for_yolo_yaml(pairs, inputs_dir):
-    """
-    Gets unique parent directories of images from pairs, relative to a base directory.
-    This is a helper for creating dataset.yaml files.
-    """
-    if not pairs:
-        return []
-    # Using a set to handle duplicates automatically
-    # The path is converted to a string for use in the YAML file
-    relative_dirs = {str(p[0].parent.relative_to(inputs_dir)) for p in pairs}
-    return sorted(list(relative_dirs))
+## License
+This project is licensed under the MIT License. See the `LICENSE` file for more details.

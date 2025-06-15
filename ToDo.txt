@@ -1,3 +1,5 @@
  - support different model, not only YOLO, from ultralytics
  - support not only ultralytics
- - fit annoation size to the image size
+ - add warnings if coins detected on the edges of the image
+ - add warnings ig the image angle is far from 90 degrees
+ - add warning for blurry/dark images

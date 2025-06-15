@@ -3,7 +3,7 @@ import cv2 # Import for font selection
 # --- Base Paths ---
 # Allow overriding the input directory via an environment variable for portability.
 # Fallback to the original hardcoded path if the env var is not set.
-INPUTS_DIR = "Data/CoinCountv54_plus640size"
+INPUTS_DIR = "Data/CoinsCounter.v1i.yolov5pytorch"
 
 # Example of a flexible, nested structure now supported:
 # The script will recursively find all sibling 'images' and 'labels' folders.
@@ -42,8 +42,8 @@ METRICS_JSON_NAME = "final_evaluation_metrics.json" # Name for the metrics JSON 
 CONFUSION_MATRIX_PLOT_NAME = "confusion_matrix.png" # Filename for the saved plot
 
 # --- Model Configuration ---
-MODEL_NAME_FOR_TRAINING = "BestModels/yolov8n_v5.pt"
-MODEL_PATH_FOR_PREDICTION = "BestModels/yolov8n_v5.pt"
+MODEL_NAME_FOR_TRAINING = "BestModels/yolov8n_v6.pt"
+MODEL_PATH_FOR_PREDICTION = "BestModels/yolov8n_v6.pt"
 
 # --- Training Parameters ---
 EPOCHS = 0 # Set to >0 for training, 0 for prediction/evaluation only using prediction model

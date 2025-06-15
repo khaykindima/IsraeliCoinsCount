@@ -13,6 +13,7 @@ A comprehensive computer vision project to detect and classify Israeli coins (On
 - [Project Structure](#project-structure)
 - [Setup and Installation](#setup-and-installation)
 - [How to Use](#how-to-use)
+- [Image Acquisition Guidelines](#image-acquisition-guidelines)
 - [Automated Kaggle Workflow](#automated-kaggle-workflow)
 - [Contributing](#contributing)
 - [License](#license)
@@ -204,6 +205,40 @@ Once your environment is set up and activated, all workflows are controlled by `
     ```bash
     python preprocess_dataset.py
     ```
+
+## Image Acquisition Guidelines
+
+Even though this model was trained to handle challenging conditions, to ensure the most accurate results, please follow the image acquisition guidelines below.
+
+### 1. Lighting is Crucial
+* **DO** use bright, diffuse, and even lighting to illuminate all coins clearly.
+* **DO** ensure the photo is bright enough. Dark or underexposed images hide important features.
+* **DON'T** use direct, harsh light (like a flashlight or direct sun) that creates strong shadows or reflective glare on the coins.
+
+### 2. Use a Simple, Contrasting Background
+* **DO** place coins on a plain, solid-colored, non-reflective surface that contrasts with the coins (e.g., a dark matte paper for light-colored coins).
+* **DON'T** use busy, patterned, or textured backgrounds like wood grain, floral tablecloths, or reflective surfaces.
+
+### 3. Camera Angle Matters
+* **DO** shoot from directly above the coins (a top-down, "bird's-eye" view). Keep the camera parallel to the surface.
+* **DON'T** take pictures from a sharp angle. This distorts the shape of the coins, making them appear as ovals, which can confuse the model.
+
+### 4. Keep Coins Separated
+* **DO** spread the coins out so they are not touching or are only slightly overlapping.
+* **DON'T** pile coins on top of each other. The model cannot detect coins that are heavily obscured.
+
+### 5. Ensure Good Focus and Resolution
+* **DO** make sure the image is sharp and in focus. The details on the coin face are important for classification.
+* **DON'T** use blurry or low-resolution photos where the coins are small or indistinct.
+
+### 6. Frame Your Shot
+* **DO** make sure all coins are fully inside the picture frame.
+* **DON'T** let coins get cut off by the edges of the photo.
+
+| Good Example                                                                                                     | Bad Example                                                                                                    |
+| ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| <img src="URL_TO_YOUR_GOOD_EXAMPLE_IMAGE.jpg" width="350"> | <img src="URL_TO_YOUR_BAD_EXAMPLE_IMAGE.jpg" width="350"> |
+| *Even lighting, top-down view, coins separated, plain background.* | *Harsh shadows, angled view, overlapping coins, busy background.* |
 
 ## Automated Kaggle Workflow
 
