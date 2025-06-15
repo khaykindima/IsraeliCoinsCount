@@ -11,6 +11,26 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 
+def check_image_blur(image_np, threshold, logger, image_name):
+    """
+    Checks if an image is blurry by calculating the variance of its Laplacian.
+    If the variance is below a given threshold, a warning is logged.
+    """
+    if image_np is None:
+        return
+
+    # Convert to grayscale to compute Laplacian
+    gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
+    # Calculate the variance of the Laplacian
+    variance = cv2.Laplacian(gray, cv2.CV_64F).var()
+
+    if variance < threshold:
+        logger.warning(
+            f"Image '{image_name}' may be blurry (Laplacian variance: {variance:.2f}). "
+            f"Detection results may be inaccurate."
+        )
+
+
 def get_adaptive_drawing_params(image_width, config_module):
     """
     Calculates drawing parameters scaled to the image size, based on a reference width.

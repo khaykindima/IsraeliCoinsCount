@@ -12,7 +12,8 @@ try:
         setup_logging, load_class_names_from_yaml, 
         create_detector_from_config,
         validate_config_and_paths,
-        save_config_to_run_dir 
+        save_config_to_run_dir,
+        check_image_blur
     )
 except ImportError as e:
     print(f"ImportError: {e}. Make sure config.py, utils.py, and detector.py are in the same directory or PYTHONPATH")
@@ -166,6 +167,15 @@ class InferenceRunner:
             if image_np is None:
                 self.logger.warning(f"Could not read image {image_path}, skipping.")
                 continue
+
+            # Check for blurriness if enabled in config
+            if self.config.ENABLE_BLUR_DETECTION:
+                check_image_blur(
+                    image_np,
+                    self.config.BLUR_DETECTION_THRESHOLD,
+                    self.logger,
+                    image_path.name
+                )
 
             # Get predictions
             predictions = self.detector.predict(image_np, return_raw=False)

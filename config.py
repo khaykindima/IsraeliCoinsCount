@@ -62,6 +62,17 @@ TEST_RATIO = 0.15
 # --- Image Preprocessing ---
 ENABLE_GRAYSCALE_PREPROCESSING = False # Set to False to use original color images
 
+# --- Image Quality Checks ---
+ENABLE_BLUR_DETECTION = True
+# Images with a Laplacian variance below this threshold will be flagged as potentially blurry.
+# This value may need tuning based on image resolution and content.
+BLUR_DETECTION_THRESHOLD = 100.0
+
+# --- Cut-off Coin Detection ---
+ENABLE_CUT_OFF_CHECK = True
+# Defines how close a box edge needs to be to the image edge to be flagged (in pixels).
+CUT_OFF_TOLERANCE = 2
+
 # --- Augmentation Parameters ---
 AUGMENTATION_PARAMS = {
     'hsv_h': 0.015,
@@ -101,10 +112,7 @@ ENABLE_ASPECT_RATIO_FILTER = True  # Set to True to enable, False to disable
 # A perfect square has a ratio of 1.0.
 ASPECT_RATIO_FILTER_THRESHOLD = 2.1
 
-# --- Cut-off Coin Detection ---
-ENABLE_CUT_OFF_CHECK = True
-# Defines how close a box edge needs to be to the image edge to be flagged (in pixels).
-CUT_OFF_TOLERANCE = 2
+
 # --- Drawing Configuration ---
 # Colors are in BGR format
 BOX_COLOR_MAP = {

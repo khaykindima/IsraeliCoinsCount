@@ -29,13 +29,15 @@ Here is an example of the model detecting and counting coins in an image:
 
 ## Key Features
 
-* **Config-Driven Workflows**: Almost all parameters are centralized in `config.py` for easy management of experiments.
+* **Modular Configuration**: Key parameters are centralized in `config.py`, and class names are defined separately in `classes_names.yaml`, decoupling the project logic from the dataset structure.
 * **Flexible Data Handling**: Supports automatic data splitting by ratio or using pre-defined `train/valid/test` folders. The script can also recursively discover `images`/`labels` folders in nested subdirectories.
+* **Image Quality Checks**:
+    * **Blur Detection**: Automatically analyzes input images for blurriness using Laplacian variance and logs a warning for low-quality images that may lead to inaccurate detections.
+    * **Edge Detection Warning**: Logs a warning for detected coins that touch the edge of the image, as their detection may be unreliable.
 * **Advanced Post-Processing**: Includes a customizable pipeline to improve model accuracy by filtering predictions based on:
     * Per-class confidence thresholds.
     * Bounding box aspect ratio.
     * Optimized Non-Maximum Suppression (NMS).
-    * **Edge Detection Warning**: Logs a warning for detected coins that touch the edge of the image, as their detection may be unreliable.
 * **In-Depth Evaluation**: The evaluation script generates a multi-sheet Excel report comparing model performance before and after the post-processing pipeline, providing deep insights into the model's behavior.
 * **Error Analysis**: Automatically saves images of incorrect predictions (False Positives and False Negatives) for visual inspection and debugging.
 * **Automated Cloud Workflow**: Includes a Kaggle notebook for automated setup, training, evaluation, and results packaging on cloud GPUs.
