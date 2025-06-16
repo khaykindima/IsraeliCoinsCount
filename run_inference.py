@@ -5,65 +5,22 @@ import logging
 import pandas as pd
 import shutil # For copying log file if needed, though now logger writes directly
 from collections import Counter
+import time 
+import datetime 
 
 try:
     import config
     from utils import (
-        setup_logging, load_class_names_from_yaml, 
+        setup_logging,
         create_detector_from_config,
         validate_config_and_paths,
         save_config_to_run_dir,
-        check_image_blur
+        create_unique_run_dir,
+        get_class_map_from_yaml
     )
 except ImportError as e:
     print(f"ImportError: {e}. Make sure config.py, utils.py, and detector.py are in the same directory or PYTHONPATH")
     exit()
-
-# Ideally, this function would be in utils.py
-def _create_unique_inference_run_dir(base_output_dir, model_name_prefix, logger_for_util):
-    """
-    Creates a unique directory for an inference run.
-    Format: base_output_dir/inference_runs/MODEL_NAME_PREFIX_inference_runXX/
-    """
-    inference_runs_base = base_output_dir / "inference_runs"
-    inference_runs_base.mkdir(parents=True, exist_ok=True)
-    
-    run_idx = 1
-    while True:
-        # Sanitize model_name_prefix by replacing characters not suitable for directory names
-        safe_model_name_prefix = model_name_prefix.replace('.', '_')
-        run_dir_name = f"{safe_model_name_prefix}_inference_run{run_idx}"
-        current_run_dir = inference_runs_base / run_dir_name
-        if not current_run_dir.exists():
-            try:
-                current_run_dir.mkdir(parents=True)
-                if logger_for_util: # Check if logger is available
-                    logger_for_util.info(f"Created unique inference run directory: {current_run_dir}")
-                else: # Fallback print if logger not ready
-                    print(f"Created unique inference run directory: {current_run_dir}")
-                return current_run_dir
-            except OSError as e:
-                if logger_for_util:
-                    logger_for_util.error(f"Failed to create directory {current_run_dir}: {e}")
-                else:
-                    print(f"ERROR: Failed to create directory {current_run_dir}: {e}")
-                # Fallback: use a generic name in inference_runs_base to avoid crash
-                fallback_dir = inference_runs_base / f"inference_run_fallback_{run_idx}"
-                fallback_dir.mkdir(parents=True, exist_ok=True) # Should succeed
-                return fallback_dir
-
-        run_idx += 1
-        if run_idx > 1000: # Safety break
-            if logger_for_util:
-                logger_for_util.error("Exceeded 1000 attempts to create a unique run directory. Using fallback.")
-            else:
-                print("ERROR: Exceeded 1000 attempts to create a unique run directory. Using fallback.")
-            # Create a fallback directory with a timestamp to ensure uniqueness
-            import datetime
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            fallback_dir = inference_runs_base / f"{safe_model_name_prefix}_inference_run_fallback_{timestamp}"
-            fallback_dir.mkdir(parents=True, exist_ok=True)
-            return fallback_dir
 
 
 class InferenceRunner:
@@ -167,18 +124,9 @@ class InferenceRunner:
             if image_np is None:
                 self.logger.warning(f"Could not read image {image_path}, skipping.")
                 continue
-
-            # Check for blurriness if enabled in config
-            if self.config.ENABLE_BLUR_DETECTION:
-                check_image_blur(
-                    image_np,
-                    self.config.BLUR_DETECTION_THRESHOLD,
-                    self.logger,
-                    image_path.name
-                )
-
+            
             # Get predictions
-            predictions = self.detector.predict(image_np, return_raw=False)
+            predictions = self.detector.predict(image_np, return_raw=False, image_name=image_path.name)
 
             # Calculate and log the summary of counts and total value
             self._calculate_and_log_summary(predictions, image_path.name)
@@ -226,12 +174,11 @@ def setup_inference():
     model_name_prefix = model_path.stem # e.g., "yolov8n_best_direct"
 
     # Create the unique run directory for this inference session
-    # Pass temp_logger for initial messages from _create_unique_inference_run_dir
-    current_run_dir = _create_unique_inference_run_dir(config.OUTPUT_DIR, model_name_prefix, temp_logger)
-    if not current_run_dir: # Should not happen with fallback in _create_unique_inference_run_dir
-        temp_logger.error("CRITICAL: Failed to create a unique run directory. Exiting.")
-        return None, None, None
-
+    base_dir = config.OUTPUT_DIR / "inference_runs"
+    base_dir.mkdir(parents=True, exist_ok=True) # Ensure base directory exists
+    run_name_prefix = f"{model_name_prefix}_inference_run"
+    current_run_dir = create_unique_run_dir(base_dir, run_name_prefix)
+    
     # Now, set up the main logger to write into the unique run directory
     log_file_name = getattr(config, 'LOG_FILE_BASE_NAME', 'yolo_log') + "_inference.log"
     log_file_path = current_run_dir / log_file_name
@@ -239,6 +186,7 @@ def setup_inference():
     
     # Replace temp_logger usage with the fully configured logger
     logger.info(f"Switched to main logger. Log file: {log_file_path}")
+    logger.info(f"Created unique inference run directory: {current_run_dir}")
 	
     save_config_to_run_dir(current_run_dir, logger)
 
@@ -247,12 +195,10 @@ def setup_inference():
         return logger, None, current_run_dir # Return dir even on validation fail for logs
 
     logger.info(f"--- Setting up the detector for inference in run directory: {current_run_dir} ---")
-    class_names_yaml_path = Path(config.CLASS_NAMES_YAML)
-    names_from_yaml = load_class_names_from_yaml(class_names_yaml_path, logger)
-    if names_from_yaml is None:
-        logger.error(f"CRITICAL: Could not load class names from '{class_names_yaml_path}'.")
+    
+    class_names_map = get_class_map_from_yaml(config, logger)
+    if not class_names_map:
         return logger, None, current_run_dir
-    class_names_map = {i: str(name).strip() for i, name in enumerate(names_from_yaml)}
 
     try:
         detector = create_detector_from_config(
@@ -267,6 +213,7 @@ def main():
     """
     Main function to set up and run the inference process.
     """
+    start_time = time.time()
     # Convert string paths from config to absolute Path objects for the rest of the script
     config.INPUTS_DIR = Path(config.INPUTS_DIR).resolve()
     config.OUTPUT_DIR = Path(config.OUTPUT_DIR).resolve()
@@ -322,6 +269,11 @@ def main():
             logger.error(f"Failed to export results to Excel: {e}")
 
     logger.info(f"--- Inference run finished. Outputs are in: {current_run_dir} ---")
+    
+    end_time = time.time()
+    duration_seconds = end_time - start_time
+    formatted_duration = str(datetime.timedelta(seconds=duration_seconds))
+    logger.info(f"--- Total execution time for inference run: {formatted_duration} ---")
 
 
 if __name__ == '__main__':

@@ -9,10 +9,10 @@ import numpy as np
 import config
 from utils import (
     setup_logging,
-    load_class_names_from_yaml,
     discover_and_pair_image_labels,
     parse_yolo_annotations,
-    draw_ground_truth_boxes
+    draw_ground_truth_boxes,
+    get_class_map_from_yaml
 )
 
 def main():
@@ -43,13 +43,9 @@ def main():
     logger.info(f"Output will be saved to: {output_dir}")
 
     # --- Step 1: Load Class Names ---
-    class_names_yaml_path = Path(config.CLASS_NAMES_YAML)
-    names_from_yaml = load_class_names_from_yaml(class_names_yaml_path, logger)
-    if names_from_yaml is None:
-        logger.error(f"CRITICAL: Could not load class names from '{class_names_yaml_path}'. Exiting.")
+    class_names_map = get_class_map_from_yaml(config, logger)
+    if not class_names_map:
         return
-    class_names_map = {i: str(name).strip() for i, name in enumerate(names_from_yaml)}
-    logger.info(f"Loaded {len(class_names_map)} class names: {class_names_map}")
 
     # --- Step 2: Discover all image-label pairs ---
     image_label_pairs, _ = discover_and_pair_image_labels(

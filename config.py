@@ -3,7 +3,7 @@ import cv2 # Import for font selection
 # --- Base Paths ---
 # Allow overriding the input directory via an environment variable for portability.
 # Fallback to the original hardcoded path if the env var is not set.
-INPUTS_DIR = "Data/tmp"
+INPUTS_DIR = "Data/CoinCountv54_plus640size"
 
 # Example of a flexible, nested structure now supported:
 # The script will recursively find all sibling 'images' and 'labels' folders.
@@ -59,19 +59,36 @@ TRAIN_RATIO = 0.7
 VAL_RATIO = 0.15
 TEST_RATIO = 0.15
 
+
 # --- Image Preprocessing ---
 ENABLE_GRAYSCALE_PREPROCESSING = False # Set to False to use original color images
 
+
 # --- Image Quality Checks ---
-ENABLE_BLUR_DETECTION = True
+# Blur
+ENABLE_BLUR_DETECTION = False
 # Images with a Laplacian variance below this threshold will be flagged as potentially blurry.
 # This value may need tuning based on image resolution and content.
 BLUR_DETECTION_THRESHOLD = 100.0
 
-# --- Cut-off Coin Detection ---
+# Darkness
+ENABLE_DARKNESS_DETECTION = True
+# Images with an average pixel intensity below this threshold will be flagged as too dark.
+# The value ranges from 0 (completely black) to 255 (completely white).
+DARKNESS_DETECTION_THRESHOLD = 50.0
+
+# Sharp angle
+ENABLE_SHARP_ANGLE_DETECTION = True
+# Threshold for an individual box's aspect ratio (longer side / shorter side) to be considered suspicious.
+SHARP_ANGLE_AR_THRESHOLD = 2.5
+# If this percentage of detected boxes exceed the AR threshold, a warning for the whole image is logged.
+SHARP_ANGLE_MIN_PERCENTAGE = 50.0
+
+# Cut-off Coins
 ENABLE_CUT_OFF_CHECK = True
 # Defines how close a box edge needs to be to the image edge to be flagged (in pixels).
 CUT_OFF_TOLERANCE = 2
+
 
 # --- Augmentation Parameters ---
 AUGMENTATION_PARAMS = {

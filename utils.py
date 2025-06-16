@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+from bbox_utils import calculate_aspect_ratio
 
 
 def check_image_blur(image_np, threshold, logger, image_name):
@@ -29,6 +30,58 @@ def check_image_blur(image_np, threshold, logger, image_name):
             f"Image '{image_name}' may be blurry (Laplacian variance: {variance:.2f}). "
             f"Detection results may be inaccurate."
         )
+
+def check_image_darkness(image_np, threshold, logger, image_name):
+    """
+    Checks if an image is too dark by calculating the mean of its grayscale pixel values.
+    If the mean brightness is below a given threshold, a warning is logged.
+    """
+    if image_np is None:
+        return
+
+    # Convert to grayscale to calculate average brightness
+    gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
+    # Calculate the mean of all pixel values
+    brightness = gray.mean()
+
+    if brightness < threshold:
+        logger.warning(
+            f"Image '{image_name}' may be too dark (average brightness: {brightness:.2f}). "
+            f"Detection results may be inaccurate."
+        )
+
+def check_sharp_angle(predictions_data, ar_threshold, min_percentage_threshold, logger, image_name):
+    """
+    Checks if an image was potentially taken from a sharp angle by analyzing
+    the aspect ratio of detected bounding boxes.
+
+    Args:
+        predictions_data (list): A list of raw prediction dictionaries.
+        ar_threshold (float): The aspect ratio above which a box is suspicious.
+        min_percentage_threshold (float): The percentage of suspicious boxes required
+                                          to trigger a warning for the image.
+        logger (logging.Logger): Logger instance.
+        image_name (str): The name of the image for the log message.
+    """
+    if not predictions_data:
+        return  # Cannot check if no objects were detected
+
+    suspicious_boxes_count = 0
+    total_boxes = len(predictions_data)
+
+    for pred in predictions_data:
+        aspect_ratio = calculate_aspect_ratio(pred['xyxy']) #
+        if aspect_ratio > ar_threshold:
+            suspicious_boxes_count += 1
+
+    if total_boxes > 0:
+        percentage_suspicious = (suspicious_boxes_count / total_boxes) * 100
+        if percentage_suspicious >= min_percentage_threshold:
+            logger.warning(
+                f"Image '{image_name}' may have been taken from a sharp angle. "
+                f"{suspicious_boxes_count}/{total_boxes} ({percentage_suspicious:.1f}%) of detected objects "
+                f"have an aspect ratio > {ar_threshold}."
+            )
 
 
 def get_adaptive_drawing_params(image_width, config_module):
@@ -91,6 +144,7 @@ def create_detector_from_config(model_path, class_map, config_module, logger):
         model_path=model_path_obj,
         class_names_map=class_map,
         config_module=config_module,  # Pass the entire config module
+        logger=logger,
         per_class_conf_thresholds=config_module.PER_CLASS_CONF_THRESHOLDS,
         default_conf_thresh=config_module.DEFAULT_CONF_THRESHOLD,
         iou_suppression_threshold=config_module.IOU_SUPPRESSION_THRESHOLD,
@@ -227,13 +281,6 @@ def setup_logging(log_file_path_obj, logger_name='yolo_script_logger'): # Change
     logger.info(f"Logging for '{logger_name}' initialized. File output to: {log_file_path_obj}")
     return logger
 
-def copy_log_to_run_directory(initial_log_path, run_dir_path, target_log_filename, logger_instance=None):
-    """Copies the log file to the specified run directory."""
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
-    if run_dir_path and initial_log_path.exists():
-        destination_log_path = Path(run_dir_path) / target_log_filename
-        shutil.copy2(initial_log_path, destination_log_path) 
-        log.info(f"Log file copied to: {destination_log_path}")
 
 # --- Centralized function for creating unique run directories ---
 def create_unique_run_dir(base_dir_pathobj, run_name_prefix):
@@ -343,6 +390,24 @@ def load_class_names_from_yaml(yaml_path_obj, logger_instance=None): # Renamed f
         return data.get('names') if isinstance(data.get('names'), list) else None
     except Exception:
         return None
+
+def get_class_map_from_yaml(config_module, logger):
+    """
+    Loads the class names from the project's central YAML file and returns
+    it as a dictionary map.
+    
+    Returns:
+        dict: A map of class IDs to class names, or None if loading fails.
+    """
+    class_names_yaml_path = Path(config_module.CLASS_NAMES_YAML)
+    names_from_yaml = load_class_names_from_yaml(class_names_yaml_path, logger)
+    if names_from_yaml is None:
+        logger.error(f"CRITICAL: Could not load class names from '{class_names_yaml_path}'.")
+        return None
+        
+    class_names_map = {i: str(name).strip() for i, name in enumerate(names_from_yaml)}
+    logger.info(f"Loaded {len(class_names_map)} class names: {class_names_map}")
+    return class_names_map
 
 def create_yolo_dataset_yaml(dataset_root_abs_path_str, train_rel_img_dir_paths, val_rel_img_dir_paths,
                         test_rel_img_dir_paths, class_names_map, num_classes_val,

@@ -1,256 +1,259 @@
-# Israeli Coins Detection and Counting
+import logging
+import time
+import datetime
+from pathlib import Path
+from ultralytics import YOLO
+import pandas as pd
+import shutil
 
-![Python Version](https://img.shields.io/badge/python-3.11-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
+# Project-specific modules
+import config
+from utils import (
+    setup_logging,
+    discover_and_pair_image_labels, split_data,
+    get_unique_class_ids,
+    create_yolo_dataset_yaml, validate_config_and_paths,
+    create_unique_run_dir, create_detector_from_config,
+    _get_relative_path_for_yolo_yaml,
+    save_config_to_run_dir,
+    get_class_map_from_yaml
+)
+from evaluate_model import YoloEvaluator
 
-A comprehensive computer vision project to detect and classify Israeli coins (One, Two, Five, and Ten Shekels) using YOLOv8. The project includes a full pipeline from data preprocessing and training to in-depth model evaluation and inference.
-
-## Table of Contents
-- [Demo](#demo)
-- [Key Features](#key-features)
-- [Dataset](#dataset)
-- [Pre-trained Models](#pre-trained-models)
-- [Project Structure](#project-structure)
-- [Setup and Installation](#setup-and-installation)
-- [How to Use](#how-to-use)
-- [Image Acquisition Guidelines](#image-acquisition-guidelines)
-- [Automated Kaggle Workflow](#automated-kaggle-workflow)
-- [Contributing](#contributing)
-- [License](#license)
-
-## Demo
-Here is an example of the model detecting and counting coins in an image:
-
-<p align="center">
-  <img src="https://github.com/khaykindima/IsraeliCoinsCount/blob/main/demo_image.jpg?raw=true" alt="Demo Image" width="750">
-  <br>
-  <em>A composite image showing the annotated detection<br>and the corresponding summary printed to the console.</em>
-</p>
-
-## Key Features
-
-* **Config-Driven Workflows**: Almost all parameters are centralized in `config.py` for easy management of experiments.
-* **Flexible Data Handling**: Supports automatic data splitting by ratio or using pre-defined `train/valid/test` folders. The script can also recursively discover `images`/`labels` folders in nested subdirectories.
-* **Advanced Post-Processing**: Includes a customizable pipeline to improve model accuracy by filtering predictions based on:
-    * Per-class confidence thresholds.
-    * Bounding box aspect ratio.
-    * Optimized Non-Maximum Suppression (NMS).
-* **In-Depth Evaluation**: The evaluation script generates a multi-sheet Excel report comparing model performance before and after the post-processing pipeline, providing deep insights into the model's behavior.
-* **Error Analysis**: Automatically saves images of incorrect predictions (False Positives and False Negatives) for visual inspection and debugging.
-* **Automated Cloud Workflow**: Includes a Kaggle notebook for automated setup, training, evaluation, and results packaging on cloud GPUs.
-* **Reproducible Environments**: Provides dedicated environment files (`ultralytics_wsl_env.yml` and `ultralytics_win_env.yml`) for reproducible setups on both Linux/WSL and native Windows.
-
-## Dataset
-
-The dataset used for this project contains images of Israeli coins (1, 2, 5, and 10 Shekels) and is publicly available on Kaggle.
-
-* **Dataset Link**: [Israeli Coins Dataset on Kaggle](https://www.kaggle.com/datasets/dimakhaykin/israelicoins)
-
-## Pre-trained Models
-
-This repository includes a `BestModels/` directory containing several well-performing model weights.
-
-The best model to date, **`yolov8n_v5.pt`**, is recommended for direct evaluation and inference. It achieves an F1-score of **0.9982** on the test set.
-
-## Project Structure
-
-The project will recursively find all sibling `images` and `labels` folders within the `INPUTS_DIR`.
-
-```
-IsraeliCoinsCount/
-├── BestModels/
-│   └── yolov8n_v5.pt
-├── Data/
-│   └── CoinCount.v54/
-│       ├── data.yaml
-│       ├── session_1_daylight/
-│       │   ├── images/
-│       │   │   └── img1.jpg
-│       │   └── labels/
-│       │       └── img1.txt
-│       └── session_2_indoor/
-│           └── setup_A/
-│               ├── images/
-│               │   └── img2.jpg
-│               └── labels/
-│                   └── img2.txt
-├── README.md
-├── .gitignore
-├── config.py
-├── train.py
-├── utils.py
-└── ... (other project files)
-```
-
-## Setup and Installation
-
-This project can be set up on either WSL (Linux) or native Windows. Please follow the instructions for your specific operating system.
-
-### For WSL (Linux) Users (Recommended)
-
-1.  **Clone the Repository**
-    ```bash
-    git clone [https://github.com/khaykindima/IsraeliCoinsCount.git](https://github.com/khaykindima/IsraeliCoinsCount.git)
-    cd IsraeliCoinsCount
-    ```
-2.  **Create and Activate Conda Environment**
-    ```bash
-    # Create the environment from the WSL file
-    conda env create -f ultralytics_wsl_env.yml
-
-    # Activate the new environment
-    conda activate ultralytics_wsl_env
-    ```
-
-### For Native Windows Users
-
-The setup for native Windows requires a few extra steps after creating the base environment.
-
-1.  **Clone the Repository**
-    ```powershell
-    git clone [https://github.com/khaykindima/IsraeliCoinsCount.git](https://github.com/khaykindima/IsraeliCoinsCount.git)
-    cd IsraeliCoinsCount
-    ```
-2.  **Create the Base Conda Environment**
-    ```powershell
-    # Create the environment from the Windows file
-    conda env create -f ultralytics_win_env.yml
-    ```
-3.  **Activate the Environment**
-    ```powershell
-    conda activate ultralytics_win_env
-    ```
-4.  **Install PyTorch Manually**
+def main_train():
+    """Main entry point for the training and evaluation script."""
+    # <<< MODIFIED: The try/except/finally block has been removed for a linear execution flow. >>>
+    start_time = time.time()
     
-    PyTorch must be installed separately to ensure the correct version for your hardware is used. Run **one** of the following commands in your activated terminal.
+    config.INPUTS_DIR = Path(config.INPUTS_DIR).resolve()
+    config.OUTPUT_DIR = Path(config.OUTPUT_DIR).resolve()
 
-    * **If you have an NVIDIA GPU:**
-        ```powershell
-        pip install torch torchvision torchaudio --index-url [https://download.pytorch.org/whl/cu121](https://download.pytorch.org/whl/cu121)
-        ```
-    * **If you do NOT have an NVIDIA GPU (CPU only):**
-        ```powershell
-        pip install torch torchvision torchaudio
-        ```
-5.  **Install ultralytics-thop Manually**
+    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    main_log_file = config.OUTPUT_DIR / f"{config.LOG_FILE_BASE_NAME}_train_or_direct_eval.log"
+    logger = setup_logging(main_log_file, logger_name='yolo_main_script_logger')
     
-    This package is also required and must be installed separately.
-    ```powershell
-    python -m pip install ultralytics-thop>=2.0.0
-    ```
+    is_training_mode = config.EPOCHS > 0
+    validation_mode = 'train' if is_training_mode else 'train_direct_eval'
+    if not validate_config_and_paths(config, validation_mode, logger):
+        return
 
-## How to Use
+    logger.info("--- Step 0 & 1: Data Preparation & Class Names ---")
+    image_label_pairs, _ = discover_and_pair_image_labels(
+        config.INPUTS_DIR, config.IMAGE_SUBDIR_BASENAME, config.LABEL_SUBDIR_BASENAME, logger
+    )
+    if not image_label_pairs:
+        raise FileNotFoundError("No image-label pairs found. Check INPUTS_DIR and its structure.")
 
-Once your environment is set up and activated, all workflows are controlled by `config.py`.
+    class_names_map, num_classes = load_or_derive_class_names(logger)
+    if num_classes == 0:
+        raise ValueError("Number of classes is zero. Cannot proceed.")
 
-### 1. Configuration (`config.py`)
+    logger.info(f"Final number of classes: {num_classes}")
+    logger.info(f"Class names map: {class_names_map}")
 
-* `INPUTS_DIR`: Set the path to your dataset folder.
-* `OUTPUT_DIR`: Set the path where all outputs (logs, models, reports) will be saved (default is `experiment_results`).
-* `MODEL_PATH_FOR_PREDICTION`: Point this to the model file (`.pt`) you want to evaluate or use for inference.
-* `EPOCHS`: This is the master switch.
-    * Set to `> 0` to run the **training** workflow.
-    * Set to `0` to run the **evaluation** workflow.
+    run_dir = None
+    final_log_name = "final_run_log.log"
 
-### 2. Training a New Model
+    if is_training_mode:
+        final_log_name = f"{config.LOG_FILE_BASE_NAME}_train_final.log"
+        run_dir = run_training_workflow(image_label_pairs, class_names_map, num_classes, logger)
+    else:
+        final_log_name = f"{config.LOG_FILE_BASE_NAME}_direct_eval_final.log"
+        run_dir = run_direct_evaluation_workflow(image_label_pairs, class_names_map, logger)
 
-1.  In `config.py`, set `EPOCHS` to a number greater than 0 (e.g., `EPOCHS = 50`).
-2.  Specify the base model to use for training in `MODEL_NAME_FOR_TRAINING`.
-3.  Run the training script:
-    ```bash
-    python train.py
-    ```
-    All outputs will be saved in a unique folder inside `experiment_results/training_runs/`.
+    end_time = time.time()
+    duration_seconds = end_time - start_time
+    formatted_duration = str(datetime.timedelta(seconds=duration_seconds))
+    logger.info(f"--- Total execution time for train/evaluation run: {formatted_duration} ---")
 
-### 3. Evaluating an Existing Model
+    logging.shutdown()
 
-1.  In `config.py`, set `EPOCHS = 0`.
-2.  Set `MODEL_PATH_FOR_PREDICTION` to the path of your trained model (e.g., `BestModels/yolov8n_v5.pt`).
-3.  Run the script:
-    ```bash
-    python train.py
-    ```
-    A unique evaluation folder will be created in `experiment_results/direct_evaluation_runs/`.
+    if run_dir and main_log_file.exists():
+        try:
+            destination_path = run_dir / final_log_name
+            shutil.move(str(main_log_file), str(destination_path))
+            print(f"Log file successfully moved to: {destination_path}")
+        except Exception as e:
+            print(f"ERROR: Failed to move log file: {e}")
 
-### 4. Running Inference on New Images
 
-1.  Run the inference script from the command line, providing a path to an image or a folder.
-    ```bash
-    # Run on a single image
-    python run_inference.py /path/to/your/image.jpg
+def load_or_derive_class_names(logger):
+    """Loads class names from the required YAML file or raises an error if not found."""
+    class_names_map = get_class_map_from_yaml(config, logger)
+    
+    if class_names_map:
+        return class_names_map, len(class_names_map)
+    else:
+        raise FileNotFoundError(
+            f"CRITICAL: The class names file '{config.CLASS_NAMES_YAML}' was not found or is invalid. "
+            f"This file is required for all operations."
+        )
 
-    # Run on a folder of images and export results to Excel
-    python run_inference.py /path/to/your/folder/ --export_excel
-    ```
-    Annotated images and other outputs will be saved in `experiment_results/inference_runs/`.
+def run_training_workflow(pairs, class_names_map, num_classes, logger):
+    """Orchestrates the model training process."""
+    logger.info("--- Starting Training Workflow ---")
+    if config.USE_PREDEFINED_SPLITS:
+        logger.info("Configuration set to use pre-defined splits.")
+        train_dir = config.INPUTS_DIR / 'train'
+        val_dir = config.INPUTS_DIR / 'valid'
+        test_dir = config.INPUTS_DIR / 'test'
+        
+        if not (train_dir.is_dir() and val_dir.is_dir()):
+            raise FileNotFoundError(
+                f"USE_PREDEFINED_SPLITS is True, but 'train' and 'valid' directories "
+                f"were not found in {config.INPUTS_DIR}."
+            )
+            
+        logger.info("Found pre-defined 'train' and 'valid' directories.")
+        train_rel_img_dirs = [str(Path('train') / config.IMAGE_SUBDIR_BASENAME)]
+        val_rel_img_dirs = [str(Path('valid') / config.IMAGE_SUBDIR_BASENAME)]
+        
+        if test_dir.is_dir():
+            logger.info("Found optional 'test' directory.")
+            test_rel_img_dirs = [str(Path('test') / config.IMAGE_SUBDIR_BASENAME)]
+        else:
+            logger.info("Optional 'test' directory not found.")
+            test_rel_img_dirs = []
+    else:
+        logger.info("Configuration set to split all discovered data based on ratios.")
+        train_pairs, val_pairs, test_pairs = split_data(
+            image_label_pairs=pairs,
+            train_ratio=config.TRAIN_RATIO,
+            val_ratio=config.VAL_RATIO,
+            test_ratio=config.TEST_RATIO,
+            logger_instance=logger
+        )
+        train_rel_img_dirs = _get_relative_path_for_yolo_yaml(train_pairs, config.INPUTS_DIR)
+        val_rel_img_dirs = _get_relative_path_for_yolo_yaml(val_pairs, config.INPUTS_DIR)
+        test_rel_img_dirs = _get_relative_path_for_yolo_yaml(test_pairs, config.INPUTS_DIR)
 
-2.  For each image, a summary of detected coins and their total value will be printed to the console.
+    dataset_yaml_path = config.OUTPUT_DIR / config.DATASET_YAML_NAME
 
-    **Example Output:**
-    ```
-    INFO: --- Summary for your_image_name.jpg ---
-    INFO: Detections: 2x One, 3x Two, 1x Five, 6x Ten
-    INFO: Total Sum: 73 Shekels
-    INFO: -----------------------------------------
-    ```
+    create_yolo_dataset_yaml(
+        str(config.INPUTS_DIR.resolve()),
+        train_rel_img_dirs,
+        val_rel_img_dirs,
+        test_rel_img_dirs,
+        class_names_map,
+        num_classes,
+        dataset_yaml_path,
+        config.IMAGE_SUBDIR_BASENAME,
+        config.LABEL_SUBDIR_BASENAME,
+        logger
+    )
+    
+    model = YOLO(config.MODEL_NAME_FOR_TRAINING)
+    
+    training_runs_base_dir = config.OUTPUT_DIR / "training_runs"
+    run_name_prefix = f"{Path(config.MODEL_NAME_FOR_TRAINING).stem}_train_run"
+    unique_run_dir = create_unique_run_dir(training_runs_base_dir, run_name_prefix)
+    logger.info(f"Standardized training run directory created at: {unique_run_dir}")
 
-### 5. Utility Scripts
+    results = model.train(
+        data=str(dataset_yaml_path), 
+		epochs=config.EPOCHS, 
+		imgsz=config.IMG_SIZE,
+        project=str(unique_run_dir.parent), 
+		name=unique_run_dir.name,
+        optimizer=config.TRAINING_OPTIMIZER, 
+		lr0=config.TRAINING_LR0, 
+		lrf=config.TRAINING_LRF,
+        exist_ok=True,
+        save_period=1,
+		**config.AUGMENTATION_PARAMS)
+        
+    run_dir = Path(results.save_dir)
+	
+    save_config_to_run_dir(run_dir, logger) 
 
-* **Verify Annotations**: Check your ground truth labels by running `visualize_dataset.py`.
-    ```bash
-    # Visualize a random sample of 10 images
-    python visualize_dataset.py --num_images 10
-    ```
-* **Preprocess Dataset**: To convert your entire dataset to grayscale, enable it in `config.py` and run:
-    ```bash
-    python preprocess_dataset.py
-    ```
+    best_model_path = _find_best_model(model, run_dir, logger)
 
-## Image Acquisition Guidelines
+    if best_model_path:
+        logger.info("--- Starting Standard Ultralytics Validation on Test Set ---")
+        try:
+            validation_model = YOLO(best_model_path)
+            validation_results = validation_model.val(
+                data=str(dataset_yaml_path),
+                split='test',
+                project=str(run_dir),
+                name="standard_test_validation",
+                iou=config.BOX_MATCHING_IOU_THRESHOLD
+            )
+            logger.info(f"Standard validation results saved in: {validation_results.save_dir}")
+        except Exception as e:
+            logger.exception("An error occurred during standard post-training validation.")
+        
+        logger.info("--- Starting Custom Detailed Evaluation (Post-Training) on ALL data ---")
+        _run_single_evaluation(best_model_path, class_names_map, pairs, run_dir, logger)
 
-Even though this model was trained to handle challenging conditions, to ensure the most accurate results, please follow the image acquisition guidelines below.
+    return run_dir
 
-### 1. Lighting is Crucial
-* **DO** use bright, diffuse, and even lighting to illuminate all coins clearly.
-* **DO** ensure the photo is bright enough. Dark or underexposed images hide important features.
-* **DON'T** use direct, harsh light (like a flashlight or direct sun) that creates strong shadows or reflective glare on the coins.
+def run_direct_evaluation_workflow(pairs, class_names_map, logger):
+    """Orchestrates direct evaluation of one or more pre-trained models."""
+    logger.info("--- Starting Direct Evaluation Workflow ---")
+    model_path_str = config.MODEL_PATH_FOR_PREDICTION
+    model_path_obj = Path(model_path_str)
+    base_dir = config.OUTPUT_DIR / "direct_evaluation_runs"
 
-### 2. Use a Simple, Contrasting Background
-* **DO** place coins on a plain, solid-colored, non-reflective surface that contrasts with the coins (e.g., a dark matte paper for light-colored coins).
-* **DON'T** use busy, patterned, or textured backgrounds like wood grain, floral tablecloths, or reflective surfaces.
+    run_dir = None
+    if model_path_obj.is_dir():
+        logger.info(f"Detected folder path. Evaluating all models in: {model_path_obj}")
+        run_dir = base_dir / model_path_obj.name
+        run_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Multi-model evaluation reports will be saved in: {run_dir}")
+        
+        model_files = sorted(list(model_path_obj.glob("*.pt")))
+        if not model_files:
+            logger.error(f"No model files (.pt) found in directory: {model_path_obj}")
+            return run_dir
+            
+        summary_results = []
+        for model_file in model_files:
+            logger.info(f"--- Evaluating model: {model_file.name} ---")
+            model_specific_dir = run_dir / model_file.stem
+            model_specific_dir.mkdir(parents=True, exist_ok=True)
 
-### 3. Camera Angle Matters
-* **DO** shoot from directly above the coins (a top-down, "bird's-eye" view). Keep the camera parallel to the surface.
-* **DON'T** take pictures from a sharp angle. This distorts the shape of the coins, making them appear as ovals, which can confuse the model.
+            stats = _run_single_evaluation(model_file, class_names_map, pairs, model_specific_dir, logger)
+            stats['model_name'] = model_file.name
+            summary_results.append(stats)
+        
+        if summary_results:
+            logger.info("--- Generating Multi-Model Summary Report ---")
+            summary_df = pd.DataFrame(summary_results)
+            column_order = ['model_name', 'TP', 'FP', 'FN', 'Precision', 'Recall', 'F1-Score', 'Images with Errors']
+            summary_df = summary_df[column_order]
+            summary_excel_path = run_dir / "multi_model_evaluation_summary.xlsx"
+            summary_df.to_excel(summary_excel_path, index=False, engine='openpyxl')
+            logger.info(f"Multi-model summary report saved to: {summary_excel_path}")
+    else:
+        logger.info("Detected single model file path. Running standard evaluation.")
+        run_name_prefix = f"{model_path_obj.stem}_eval"
+        run_dir = create_unique_run_dir(base_dir, run_name_prefix)
+        _run_single_evaluation(model_path_obj, class_names_map, pairs, run_dir, logger)
+    
+    return run_dir
 
-### 4. Keep Coins Separated
-* **DO** spread the coins out so they are not touching or are only slightly overlapping.
-* **DON'T** pile coins on top of each other. The model cannot detect coins that are heavily obscured.
+def _find_best_model(model, run_dir, logger):
+    if hasattr(model, 'trainer') and hasattr(model.trainer, 'best') and Path(model.trainer.best).exists():
+        path = Path(model.trainer.best).resolve()
+        logger.info(f"Best model from trainer: {path}")
+        return path
+    fallback_path = run_dir / "weights" / "best.pt"
+    if fallback_path.exists():
+        logger.info(f"Best model found at fallback path: {fallback_path}")
+        return fallback_path.resolve()
+    logger.warning(f"No best model found in {run_dir}. Check training outputs.")
+    return None
 
-### 5. Ensure Good Focus and Resolution
-* **DO** make sure the image is sharp and in focus. The details on the coin face are important for classification.
-* **DON'T** use blurry or low-resolution photos where the coins are small or indistinct.
+def _run_single_evaluation(model_path_obj, class_names_map, pairs, output_dir, logger):
+    save_config_to_run_dir(output_dir, logger)
+    detector = create_detector_from_config(model_path_obj, class_names_map, config, logger)
+    evaluator = YoloEvaluator(detector, logger)
+    overall_stats = evaluator.perform_detailed_evaluation(
+        eval_output_dir=output_dir,
+        all_image_label_pairs_eval=pairs
+    )
+    return overall_stats
 
-### 6. Frame Your Shot
-* **DO** make sure all coins are fully inside the picture frame.
-* **DON'T** let coins get cut off by the edges of the photo.
-
-| Good Example                                                                                                     | Bad Example                                                                                                    |
-| ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| <img src="URL_TO_YOUR_GOOD_EXAMPLE_IMAGE.jpg" width="350"> | <img src="URL_TO_YOUR_BAD_EXAMPLE_IMAGE.jpg" width="350"> |
-| *Even lighting, top-down view, coins separated, plain background.* | *Harsh shadows, angled view, overlapping coins, busy background.* |
-
-## Automated Kaggle Workflow
-
-The `israelicoinscount.ipynb` notebook automates the **training and evaluation processes** on the Kaggle platform.
-
-1.  **Upload**: Upload the notebook to Kaggle.
-2.  **Add Data**: Attach the coin dataset to the notebook.
-3.  **Add Secret**: Add your GitHub Personal Access Token (PAT) as a Kaggle Secret with the label `GITHUB_PAT_ISRAELICOINS`.
-4.  **Run All**: The notebook will automatically clone the repository, install dependencies, configure the project, and run the main `train.py` script.
-
-## Contributing
-Contributions are welcome! If you have suggestions for improvements, please open an issue or submit a pull request.
-
-## License
-This project is licensed under the MIT License. See the `LICENSE` file for more details.
+if __name__ == '__main__':
+    main_train()

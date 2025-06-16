@@ -47,7 +47,8 @@ class YoloEvaluator:
                 self.logger.warning(f"Could not read image {img_path}, skipping.")
                 continue
             
-            preds_after, preds_before = self.detector.predict(original_img.copy(), return_raw=True)
+            # Get predictions
+            preds_after, preds_before = self.detector.predict(original_img.copy(), return_raw=True, image_name=img_path.name) #
             
             h, w = original_img.shape[:2]
             gts_raw = parse_yolo_annotations(lbl_path, self.logger)

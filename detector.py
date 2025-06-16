@@ -3,13 +3,17 @@ import cv2
 from pathlib import Path
 from bbox_utils import calculate_iou, calculate_aspect_ratio 
 import logging
-from utils import convert_to_3channel_grayscale, get_adaptive_drawing_params
+from utils import (
+    convert_to_3channel_grayscale, get_adaptive_drawing_params, 
+    check_image_blur, check_image_darkness, check_sharp_angle
+)
 import torch
 from torchvision.ops import nms
 import numpy as np
 
 class CoinDetector:
     def __init__(self, model_path, class_names_map, config_module,
+                 logger=None,
                  per_class_conf_thresholds=None,
                  default_conf_thresh=0.25,
                  iou_suppression_threshold=0.4,
@@ -31,6 +35,10 @@ class CoinDetector:
         self.enable_per_class_confidence = enable_per_class_confidence
         self.enable_custom_nms = enable_custom_nms
         self.logger = logging.getLogger(__name__) 
+
+        # Use the provided logger, or get a default one >>>
+        self.logger = logger if logger else logging.getLogger(__name__) 
+
         self.enable_grayscale_preprocessing = enable_grayscale_preprocessing_from_config
         
         # Placeholders for current image dimensions
@@ -48,7 +56,6 @@ class CoinDetector:
             return raw_predictions_data
 
         thresholded_predictions = []
-        self.logger.info("Applying per-class confidence thresholds.")
         for pred_item in raw_predictions_data:
             class_name = self.class_names_map.get(pred_item['cls'], f"Unnamed_ID_{pred_item['cls']}").lower().strip()
             
@@ -62,10 +69,14 @@ class CoinDetector:
             if pred_item['conf'] >= conf_thresh_to_apply:
                 thresholded_predictions.append(pred_item)
         
+
         original_count = len(raw_predictions_data)
         retained_count = len(thresholded_predictions)
-        if original_count > 0:
+
+        # Log how many predictions were retained after per-class confidence filtering
+        if original_count > retained_count:
             self.logger.info(f"Per-class confidence filtering: Retained {retained_count}/{original_count} predictions.")
+    
         
         return thresholded_predictions
     
@@ -148,34 +159,56 @@ class CoinDetector:
             self.logger.info(f"Custom NMS: Retained {filtered_count}/{original_count} predictions.")
 
         return final_predictions
+    def _run_all_quality_checks(self, image_np, raw_predictions_data, image_name):
+        """Consolidated function to run all configured quality checks."""
+        if not image_name:
+            return # Don't run checks if we don't have a name for logging
+
+        self.logger.debug(f"Running all quality checks for {image_name}...")
+
+        # Check for blurriness (requires image)
+        if self.config.ENABLE_BLUR_DETECTION:
+            check_image_blur(image_np, self.config.BLUR_DETECTION_THRESHOLD, self.logger, image_name)
+        
+        # Check for darkness (requires image)
+        if self.config.ENABLE_DARKNESS_DETECTION:
+            check_image_darkness(image_np, self.config.DARKNESS_DETECTION_THRESHOLD, self.logger, image_name)
+
+        # Check for sharp angle (requires raw predictions)
+        if self.config.ENABLE_SHARP_ANGLE_DETECTION:
+            check_sharp_angle(
+                raw_predictions_data,
+                self.config.SHARP_ANGLE_AR_THRESHOLD,
+                self.config.SHARP_ANGLE_MIN_PERCENTAGE,
+                self.logger,
+                image_name
+            )
+        # Check for cut-off coins (requires raw predictions)
+        if self.config.ENABLE_CUT_OFF_CHECK:
+            self._check_for_cut_off_coins(raw_predictions_data)
 
     def _apply_postprocessing_pipeline(self, raw_predictions_data):
         """
         Applies the full custom post-processing pipeline to raw predictions.
-        """
-        self.logger.info("Starting custom post-processing pipeline...")
-        
+        """        
 		# Step 1: Confidence Filtering
         processed_data = self._apply_per_class_confidence(raw_predictions_data)
         
-        # Step 2: Check for Cut-off Coins (before filtering them out)
-        self._check_for_cut_off_coins(processed_data)
-        
-        # Step 3: Aspect Ratio Filtering
+        # Step 2: Aspect Ratio Filtering
         processed_data = self._apply_aspect_ratio_filter(processed_data)
 
-        # Step 4: Non-Maximum Suppression
+        # Step 3: Non-Maximum Suppression
         processed_data = self._apply_custom_nms(processed_data)
-        self.logger.info("Custom post-processing pipeline finished.")
 		
         return processed_data
 
-    def predict(self, image_np_or_path, return_raw=False):
+    def predict(self, image_np_or_path, return_raw=False, image_name=""):
         """
         Performs prediction on an image with custom pre and post-processing.
         Args:
             image_np_or_path (np.ndarray or str or Path): Image as NumPy array or path to image file.
             return_raw (bool): If True, returns both final and raw predictions.
+            image_name (str, optional): The name of the image, for logging purposes.
         Returns:
             list or tuple: A list of final predictions, or a tuple of 
                            (final_predictions, raw_predictions) if return_raw is True.
@@ -211,6 +244,8 @@ class CoinDetector:
                     'cls': int(r_boxes.cls[i])
                 })
         
+        # This single function call runs all configured checks.
+        self._run_all_quality_checks(preprocessed_image_np, raw_predictions_data, image_name)
         # --- Custom Post-processing ---
         final_predictions = self._apply_postprocessing_pipeline(raw_predictions_data)
         
