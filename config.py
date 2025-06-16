@@ -1,14 +1,20 @@
+"""
+config.py
+
+Central configuration file for the entire project.
+
+This file contains all the tunable parameters, paths, and settings used by the various
+scripts. Modifying this file is the primary way to control the behavior of training,
+evaluation, and inference without changing the core logic.
+"""
 import cv2 # Import for font selection
 
 # --- Base Paths ---
-# Allow overriding the input directory via an environment variable for portability.
-# Fallback to the original hardcoded path if the env var is not set.
 INPUTS_DIR = "Data/CoinCountv54_plus640size"
 
 # Example of a flexible, nested structure now supported:
 # The script will recursively find all sibling 'images' and 'labels' folders.
 # INPUTS_DIR/
-#  ├── data.yaml
 #  ├── session_1_daylight/
 #  │   ├── images/
 #  │   │   └── img1.jpg
@@ -28,7 +34,6 @@ OUTPUT_DIR = "experiment_results"     # Base directory for all outputs
 # --- Data Configuration ---
 IMAGE_SUBDIR_BASENAME = "images"
 LABEL_SUBDIR_BASENAME = "labels"
-ORIGINAL_DATA_YAML_NAME = "data.yaml" # Name of your existing data.yaml with class names
 CLASS_NAMES_YAML = "classes_names.yaml" # Centralized file for class names
 # If True, the script will look for 'train/', 'valid/', 'test/' subfolders in INPUTS_DIR.
 # If False, it will split all data according to the ratios below.
@@ -53,8 +58,7 @@ TRAINING_OPTIMIZER = 'Adam' # Default is 'SGD', or 'AdamW'
 TRAINING_LR0 = 0.0001 # Initial learning rate
 TRAINING_LRF = 0.01 # Final OneCycleLR learning rate (lr0 * lrf)
 
-# --- Data Split Ratios ---
-# These are only used if USE_PREDEFINED_SPLITS is False.
+# --- Data Split Ratios (only used if USE_PREDEFINED_SPLITS is False) ---
 TRAIN_RATIO = 0.7
 VAL_RATIO = 0.15
 TEST_RATIO = 0.15
@@ -65,26 +69,26 @@ ENABLE_GRAYSCALE_PREPROCESSING = False # Set to False to use original color imag
 
 
 # --- Image Quality Checks ---
-# Blur
+# Blur Detection
 ENABLE_BLUR_DETECTION = False
 # Images with a Laplacian variance below this threshold will be flagged as potentially blurry.
 # This value may need tuning based on image resolution and content.
 BLUR_DETECTION_THRESHOLD = 100.0
 
-# Darkness
+# Darkness Detection
 ENABLE_DARKNESS_DETECTION = True
 # Images with an average pixel intensity below this threshold will be flagged as too dark.
 # The value ranges from 0 (completely black) to 255 (completely white).
 DARKNESS_DETECTION_THRESHOLD = 50.0
 
-# Sharp angle
+# Sharp Angle Detection (based on object aspect ratios)
 ENABLE_SHARP_ANGLE_DETECTION = True
 # Threshold for an individual box's aspect ratio (longer side / shorter side) to be considered suspicious.
 SHARP_ANGLE_AR_THRESHOLD = 2.5
 # If this percentage of detected boxes exceed the AR threshold, a warning for the whole image is logged.
 SHARP_ANGLE_MIN_PERCENTAGE = 50.0
 
-# Cut-off Coins
+# Cut-off Coin Detection
 ENABLE_CUT_OFF_CHECK = True
 # Defines how close a box edge needs to be to the image edge to be flagged (in pixels).
 CUT_OFF_TOLERANCE = 2
@@ -92,27 +96,29 @@ CUT_OFF_TOLERANCE = 2
 
 # --- Augmentation Parameters ---
 AUGMENTATION_PARAMS = {
-    'hsv_h': 0.015,
-    'hsv_s': 0.7,
-    'hsv_v': 0.4,
-    'degrees': 10.0,
-    'translate': 0.1,
-    'scale': 0.5,
-    'shear': 0.0,
-    'perspective': 0.0,
-    'flipud': 0.0,
-    'fliplr': 0.0,
-    'mosaic': 1.0,
-    'mixup': 0.1,
+    'hsv_h': 0.015,     # image HSV-Hue augmentation (fraction)
+    'hsv_s': 0.7,       # image HSV-Saturation augmentation (fraction)
+    'hsv_v': 0.4,       # image HSV-Value augmentation (fraction)
+    'degrees': 10.0,    # image rotation (+/- deg)
+    'translate': 0.1,   # image translation (+/- fraction)
+    'scale': 0.5,       # image scale (+/- gain)
+    'shear': 0.0,       # image shear (+/- deg)
+    'perspective': 0.0, # image perspective (+/- fraction), range 0-0.001
+    'flipud': 0.0,      # image flip up-down (probability)
+    'fliplr': 0.0,      # image flip left-right (probability)
+    'mosaic': 1.0,      # mosaic augmentation (probability)
+    'mixup': 0.1,       # mixup augmentation (probability)
 }
 
 # --- Prediction & Evaluation Settings ---
-# For matching predictions to GT to determine TP/FP in evaluate_model.py
+# For matching predictions to GT in custom evaluation
 BOX_MATCHING_IOU_THRESHOLD = 0.5
-# For custom NMS in detector.py and evaluate_model.py
-ENABLE_CUSTOM_NMS = True            # Set to True to enable custom NMS, False to disable (no NMS after per-class confidence)
+
+# For custom Non-Maximum Suppression (NMS)
+ENABLE_CUSTOM_NMS = True
 IOU_SUPPRESSION_THRESHOLD = 0.4
-# Default confidence threshold for classes not in PER_CLASS_CONF_THRESHOLDS and For initial model.predict() call to get raw boxes before per-class filtering
+
+# Default confidence for initial raw predictions from the model
 DEFAULT_CONF_THRESHOLD = 0.25
 # Per-class confidence thresholds (class names should be lowercase)
 ENABLE_PER_CLASS_CONFIDENCE = True  # Set to True to use per-class thresholds, False to use only DEFAULT_CONF_THRESHOLD for all classes
@@ -131,7 +137,7 @@ ASPECT_RATIO_FILTER_THRESHOLD = 2.1
 
 
 # --- Drawing Configuration ---
-# Colors are in BGR format
+# Colors are in BGR format (Blue, Green, Red)
 BOX_COLOR_MAP = {
     "one": (0, 255, 255),   # Yellow
     "two": (128, 0, 128),   # Purple
@@ -148,15 +154,15 @@ FONT_FACE = cv2.FONT_HERSHEY_SIMPLEX
 # Font scale for regular predictions (run_inference.py)
 INFERENCE_FONT_SCALE = 1.2
 # Font scales for error analysis images (evaluate_model.py)
-ERROR_FP_FONT_SCALE = 1.5 # False Positives
-ERROR_FN_FONT_SCALE = 1.4 # False Negatives (missed GT)
+ERROR_FP_FONT_SCALE = 1.5 # Font for False Positives
+ERROR_FN_FONT_SCALE = 1.4 # Font for False Negatives
 
 # --- Adaptive Drawing Configuration ---
 ADAPTIVE_DRAWING_ENABLED = True
 REFERENCE_IMAGE_WIDTH = 4000 # The width for which the base drawing parameters above are optimized.
 
 # --- Coin Values ---
-# Maps lowercase class names to their monetary value for calculating total sum.
+# Maps class names to their monetary value for calculating total sum
 COIN_VALUES = {
     "one": 1,
     "two": 2,

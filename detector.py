@@ -1,3 +1,11 @@
+"""
+detector.py
+
+This module defines the `CoinDetector` class, which serves as the core wrapper
+around the YOLO model. It handles making predictions and applies a custom
+post-processing pipeline (e.g., per-class confidence, NMS, aspect ratio filtering)
+and image quality checks.
+"""
 from ultralytics import YOLO
 import cv2
 from pathlib import Path
@@ -12,6 +20,10 @@ from torchvision.ops import nms
 import numpy as np
 
 class CoinDetector:
+    """
+    A wrapper for the YOLO model to provide a tailored prediction and
+    post-processing pipeline for coin detection.
+    """
     def __init__(self, model_path, class_names_map, config_module,
                  logger=None,
                  per_class_conf_thresholds=None,
@@ -20,13 +32,22 @@ class CoinDetector:
                  enable_aspect_ratio_filter=False, aspect_ratio_filter_threshold=2.5,
                  enable_per_class_confidence=True,
                  enable_custom_nms=True,
-                 enable_grayscale_preprocessing_from_config=False # Default to True if not passed, or could raise error
+                 enable_grayscale_preprocessing_from_config=False
                  ):
-        """Initializes the CoinDetector."""
+        """
+        Initializes the CoinDetector.
+
+        Args:
+            model_path (Path): Path to the trained YOLO model (.pt file).
+            class_names_map (dict): A map from class ID to class name.
+            config_module (module): The project's config file.
+            logger (logging.Logger, optional): Logger instance.
+            ... (other parameters load from config_module).
+        """
         self.model_path = Path(model_path)
         self.model = YOLO(self.model_path)
         self.class_names_map = class_names_map
-        self.config = config_module # Store the entire config module
+        self.config = config_module
         self.per_class_conf_thresholds = per_class_conf_thresholds or {}
         self.default_conf_thresh = default_conf_thresh
         self.iou_suppression_threshold = iou_suppression_threshold
@@ -34,35 +55,27 @@ class CoinDetector:
         self.aspect_ratio_filter_threshold = aspect_ratio_filter_threshold
         self.enable_per_class_confidence = enable_per_class_confidence
         self.enable_custom_nms = enable_custom_nms
-        self.logger = logging.getLogger(__name__) 
-
-        # Use the provided logger, or get a default one >>>
         self.logger = logger if logger else logging.getLogger(__name__) 
-
         self.enable_grayscale_preprocessing = enable_grayscale_preprocessing_from_config
         
-        # Placeholders for current image dimensions
+        # Placeholders for current image dimensions used in checks
         self.current_image_height = None
         self.current_image_width = None
 
     def _apply_per_class_confidence(self, raw_predictions_data):
         """
-        Applies per-class confidence thresholds if enabled.
-        If enabled and a class is not in per_class_conf_thresholds, it raises an error.
-        If disabled, this method is skipped, and initial model.predict thresholding is used.
+        Filters predictions based on per-class confidence thresholds defined in config.
         """
         if not self.enable_per_class_confidence:
-            self.logger.info("Per-class confidence thresholding is disabled. Skipping this step.")
             return raw_predictions_data
 
         thresholded_predictions = []
         for pred_item in raw_predictions_data:
-            class_name = self.class_names_map.get(pred_item['cls'], f"Unnamed_ID_{pred_item['cls']}").lower().strip()
+            class_name = self.class_names_map.get(pred_item['cls'], "").lower().strip()
             
             if class_name not in self.per_class_conf_thresholds:
                 raise KeyError(
-                    f"Confidence threshold not defined for class '{class_name}' (ID: {pred_item['cls']}) "
-                    f"in PER_CLASS_CONF_THRESHOLDS (config.py), but per-class confidence is enabled."
+                    f"Confidence threshold not defined for class '{class_name}' in config.py"
                 )
             conf_thresh_to_apply = self.per_class_conf_thresholds[class_name]
             
@@ -72,16 +85,13 @@ class CoinDetector:
 
         original_count = len(raw_predictions_data)
         retained_count = len(thresholded_predictions)
-
-        # Log how many predictions were retained after per-class confidence filtering
         if original_count > retained_count:
             self.logger.info(f"Per-class confidence filtering: Retained {retained_count}/{original_count} predictions.")
     
-        
         return thresholded_predictions
     
     def _check_for_cut_off_coins(self, predictions_data):
-        """Logs a warning for any detected bounding box touching the image edges."""
+        """Logs a warning for any detected box touching the image edges."""
         if not self.config.ENABLE_CUT_OFF_CHECK:
             return
 
@@ -92,20 +102,14 @@ class CoinDetector:
         tolerance = self.config.CUT_OFF_TOLERANCE
         for pred in predictions_data:
             x1, y1, x2, y2 = pred['xyxy']
-            
             is_cut_off = (
-                x1 <= tolerance or
-                y1 <= tolerance or
+                x1 <= tolerance or y1 <= tolerance or
                 x2 >= self.current_image_width - tolerance or
                 y2 >= self.current_image_height - tolerance
             )
-            
             if is_cut_off:
                 class_name = self.class_names_map.get(pred['cls'], "Unknown")
-                self.logger.warning(
-                    f"Cut-off coin detected: A '{class_name.capitalize()}' coin is touching the image edge. "
-                    f"Its detection may be unreliable."
-                )
+                self.logger.warning(f"Cut-off coin detected: A '{class_name}' is touching the image edge.")
 
     def _apply_aspect_ratio_filter(self, predictions_data):
         """Filters predictions based on bounding box aspect ratio."""
@@ -115,57 +119,43 @@ class CoinDetector:
         filtered_predictions = []
         for pred in predictions_data:
             aspect_ratio = calculate_aspect_ratio(pred['xyxy'])
-
             if aspect_ratio == 0.0:
-                self.logger.debug(f"Skipping degenerate box (xyxy: {pred['xyxy']}) before aspect ratio check.")
                 continue
-
             if aspect_ratio <= self.aspect_ratio_filter_threshold:
                 filtered_predictions.append(pred)
             else:
-                self.logger.debug(
-                    f"Filtered out box due to aspect ratio: {aspect_ratio:.2f} "
-                    f"(Threshold: {self.aspect_ratio_filter_threshold}). Box: {pred['xyxy']}"
-                )
+                self.logger.debug(f"Filtered out box due to high aspect ratio: {aspect_ratio:.2f}")
         
         original_count = len(predictions_data)
-        filtered_count = len(filtered_predictions)
-        if original_count > filtered_count:
-             self.logger.info(f"Aspect ratio filter: Retained {filtered_count}/{original_count} predictions.")
+        retained_count = len(filtered_predictions)
+        if original_count > retained_count:
+             self.logger.info(f"Aspect ratio filter: Retained {retained_count}/{original_count} predictions.")
         
         return filtered_predictions
 
     def _apply_custom_nms(self, predictions_data):
-        """Applies custom inter-class Non-Maximum Suppression using torchvision.ops.nms."""
-        if not self.enable_custom_nms:
-            self.logger.info("Custom NMS is disabled. Skipping NMS.")
+        """Applies Non-Maximum Suppression (NMS) across all classes."""
+        if not self.enable_custom_nms or not predictions_data:
             return predictions_data
-        if not predictions_data:
-            return []
 
-        # Extract boxes and scores into tensors
         boxes = torch.tensor([p['xyxy'] for p in predictions_data], dtype=torch.float32)
         scores = torch.tensor([p['conf'] for p in predictions_data], dtype=torch.float32)
-
-        # Apply NMS
+        
         indices_to_keep = nms(boxes, scores, self.iou_suppression_threshold)
-
-        # Filter the original predictions list
         final_predictions = [predictions_data[i] for i in indices_to_keep]
 
         original_count = len(predictions_data)
-        filtered_count = len(final_predictions)
-        if original_count > filtered_count:
-            self.logger.info(f"Custom NMS: Retained {filtered_count}/{original_count} predictions.")
+        retained_count = len(final_predictions)
+        if original_count > retained_count:
+            self.logger.info(f"Custom NMS: Retained {retained_count}/{original_count} predictions.")
 
         return final_predictions
+
     def _run_all_quality_checks(self, image_np, raw_predictions_data, image_name):
-        """Consolidated function to run all configured quality checks."""
-        if not image_name:
-            return # Don't run checks if we don't have a name for logging
+        """Consolidated function to run all configured image quality checks."""
+        if not image_name: return
 
-        self.logger.debug(f"Running all quality checks for {image_name}...")
-
+        self.logger.debug(f"Running quality checks for {image_name}...")
         # Check for blurriness (requires image)
         if self.config.ENABLE_BLUR_DETECTION:
             check_image_blur(image_np, self.config.BLUR_DETECTION_THRESHOLD, self.logger, image_name)
@@ -205,22 +195,21 @@ class CoinDetector:
     def predict(self, image_np_or_path, return_raw=False, image_name=""):
         """
         Performs prediction on an image with custom pre and post-processing.
-        Args:
-            image_np_or_path (np.ndarray or str or Path): Image as NumPy array or path to image file.
-            return_raw (bool): If True, returns both final and raw predictions.
-            image_name (str, optional): The name of the image, for logging purposes.
-        Returns:
-            list or tuple: A list of final predictions, or a tuple of 
-                           (final_predictions, raw_predictions) if return_raw is True.
-        """
-        # --- Image Preprocessing ---
         
+        Args:
+            image_np_or_path (np.ndarray or str or Path): Image to process.
+            return_raw (bool): If True, returns predictions before and after post-processing.
+            image_name (str, optional): The name of the image for logging purposes.
+            
+        Returns:
+            list or tuple: A list of final predictions, or (final, raw) if return_raw is True.
+        """
+        # --- 1. Image Preprocessing ---
         if self.enable_grayscale_preprocessing:
-            self.logger.info("Grayscale preprocessing is ENABLED. Converting image to 3-channel grayscale.")
             # The convert_to_3channel_grayscale function from utils.py expects a NumPy array
             preprocessed_image_np = convert_to_3channel_grayscale(image_np_or_path, logger_instance=self.logger)
             if preprocessed_image_np is None:
-                self.logger.error("Image preprocessing failed. Cannot proceed with prediction.")
+                self.logger.error("Grayscale preprocessing failed.")
                 return ([], []) if return_raw else []
         else:
             preprocessed_image_np = image_np_or_path if isinstance(image_np_or_path, np.ndarray) else cv2.imread(str(image_np_or_path))
@@ -228,15 +217,15 @@ class CoinDetector:
         # Store current image dimensions for post-processing checks
         self.current_image_height, self.current_image_width, _ = preprocessed_image_np.shape
 
-        # Model Prediction
-        pred_results_list = self.model.predict(source=preprocessed_image_np, 
+        # --- 2. Model Prediction (Raw) ---
+        pred_results = self.model.predict(source=preprocessed_image_np, 
                                             save=False, 
                                             verbose=False,
                                             conf=self.default_conf_thresh)
        
         raw_predictions_data = []
-        if pred_results_list and pred_results_list[0].boxes:
-            r_boxes = pred_results_list[0].boxes
+        if pred_results and pred_results[0].boxes:
+            r_boxes = pred_results[0].boxes
             for i in range(len(r_boxes)):
                 raw_predictions_data.append({
                     'xyxy': r_boxes.xyxy[i].cpu().tolist(), 
@@ -244,12 +233,13 @@ class CoinDetector:
                     'cls': int(r_boxes.cls[i])
                 })
         
-        # This single function call runs all configured checks.
+        # --- 3. Image Quality Checks ---
         self._run_all_quality_checks(preprocessed_image_np, raw_predictions_data, image_name)
-        # --- Custom Post-processing ---
+        
+        # --- 4. Custom Post-processing ---
         final_predictions = self._apply_postprocessing_pipeline(raw_predictions_data)
         
-        # Add class names to the final predictions
+        # Add class names to the final predictions for convenience
         for pred in final_predictions:
             pred['class_name'] = self.class_names_map.get(pred['cls'], f"ID_{pred['cls']}")
         
@@ -264,25 +254,17 @@ class CoinDetector:
         """Draws final predictions on an image using adaptive settings."""
         img_to_draw_on = image_np.copy()
         h, w, _ = img_to_draw_on.shape
-        
-        # Get adaptive parameters based on the image width
         params = get_adaptive_drawing_params(w, self.config)
-        box_thickness = params['box_thickness']
-        text_thickness = params['text_thickness']
-        font_scale = params['inference_font_scale']
-        font_face = self.config.FONT_FACE
-        color_map = self.config.BOX_COLOR_MAP
-        default_color = self.config.DEFAULT_BOX_COLOR
 
         for pred_data in predictions_list:
             x1, y1, x2, y2 = map(int, pred_data['xyxy'])
             class_name = pred_data['class_name']
             label = f"{class_name} {pred_data['conf']:.2f}"
-            color = color_map.get(class_name.lower().strip(), default_color)
+            color = self.config.BOX_COLOR_MAP.get(class_name.lower().strip(), self.config.DEFAULT_BOX_COLOR)
 
-            cv2.rectangle(img_to_draw_on, (x1, y1), (x2, y2), color, box_thickness)
-            (text_w, text_h), _ = cv2.getTextSize(label, font_face, font_scale, text_thickness)
+            cv2.rectangle(img_to_draw_on, (x1, y1), (x2, y2), color, params['box_thickness'])
+            (text_w, text_h), _ = cv2.getTextSize(label, self.config.FONT_FACE, params['inference_font_scale'], params['text_thickness'])
             cv2.rectangle(img_to_draw_on, (x1, y1 - text_h - 5), (x1 + text_w, y1), color, -1)
-            cv2.putText(img_to_draw_on, label, (x1, y1 - 5), font_face, font_scale, (0,0,0), text_thickness)
+            cv2.putText(img_to_draw_on, label, (x1, y1 - 5), self.config.FONT_FACE, params['inference_font_scale'], (0,0,0), params['text_thickness'])
             
         return img_to_draw_on
