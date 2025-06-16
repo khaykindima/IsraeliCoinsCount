@@ -369,17 +369,6 @@ def split_data(image_label_pairs, train_ratio, val_ratio, test_ratio, seed=42, l
     val_end = train_end + int(total * val_ratio)
     return image_label_pairs[:train_end], image_label_pairs[train_end:val_end], image_label_pairs[val_end:]
 
-def get_unique_class_ids(list_of_label_dir_paths, logger_instance=None):
-    """Scans label files to find all unique class IDs."""
-    log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
-    unique_ids = set()
-    for label_dir_path in list_of_label_dir_paths:
-        for label_file in label_dir_path.glob('*.txt'):
-            with open(label_file, 'r') as f:
-                for line in f:
-                    if parts := line.strip().split():
-                        unique_ids.add(int(parts[0]))
-    return sorted(list(unique_ids))
 
 def load_class_names_from_yaml(yaml_path_obj, logger_instance=None): # Renamed for clarity
     """Loads the 'names' list from a YAML file."""

@@ -11,7 +11,6 @@ import config
 from utils import (
     setup_logging,
     discover_and_pair_image_labels, split_data,
-    get_unique_class_ids,
     create_yolo_dataset_yaml, validate_config_and_paths,
     create_unique_run_dir, create_detector_from_config,
     _get_relative_path_for_yolo_yaml,
