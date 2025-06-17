@@ -7,8 +7,15 @@ predictions to ground truths for performance evaluation.
 """
 import numpy as np
 from collections import defaultdict
+from typing import Union, List, Tuple, Dict, Any
 
-def calculate_iou(box1_xyxy, box2_xyxy):
+# Define a type alias for a bounding box for clarity
+BoundingBox = Union[List[float], Tuple[float, ...]]
+Prediction = Dict[str, Any]
+GroundTruth = Dict[str, Any]
+StatsDict = Dict[str, Dict[str, int]]
+
+def calculate_iou(box1_xyxy: BoundingBox, box2_xyxy: BoundingBox) -> float:
     """
     Calculates the Intersection over Union (IoU) of two bounding boxes.
 
@@ -26,8 +33,8 @@ def calculate_iou(box1_xyxy, box2_xyxy):
     y2_i = min(box1_xyxy[3], box2_xyxy[3])
 
     # Calculate intersection area
-    intersection_width = max(0, x2_i - x1_i)
-    intersection_height = max(0, y2_i - y1_i)
+    intersection_width = max(0.0, x2_i - x1_i)
+    intersection_height = max(0.0, y2_i - y1_i)
     intersection_area = intersection_width * intersection_height
 
     # Calculate the areas of the individual boxes
@@ -40,7 +47,7 @@ def calculate_iou(box1_xyxy, box2_xyxy):
     # Compute and return IoU
     return intersection_area / union_area if union_area > 0 else 0.0
 
-def calculate_aspect_ratio(xyxy):
+def calculate_aspect_ratio(xyxy: BoundingBox) -> float:
     """
     Calculates the aspect ratio of a bounding box (longer side / shorter side).
 
@@ -60,7 +67,12 @@ def calculate_aspect_ratio(xyxy):
     return max(width / height, height / width)
 
 
-def match_predictions(predictions, ground_truths, iou_threshold, class_names_map):
+def match_predictions(
+    predictions: List[Prediction], 
+    ground_truths: List[GroundTruth], 
+    iou_threshold: float, 
+    class_names_map: Dict[int, str]
+) -> Tuple[StatsDict, List[Prediction], List[Prediction], List[GroundTruth]]:
     """
     Matches predictions to ground truths to determine TP, FP, and FN.
 
@@ -80,16 +92,16 @@ def match_predictions(predictions, ground_truths, iou_threshold, class_names_map
             - list: Detailed list of False Positive (FP) predictions.
             - list: Detailed list of False Negative (FN) ground truths.
     """
-    stats = {name: {'TP': 0, 'FP': 0, 'FN': 0} for name in class_names_map.values()}
-    tp_details = []
-    fp_details = []
-    fn_details = []
+    stats: StatsDict = {name: {'TP': 0, 'FP': 0, 'FN': 0} for name in class_names_map.values()}
+    tp_details: List[Prediction] = []
+    fp_details: List[Prediction] = []
+    fn_details: List[GroundTruth] = []
 
     # Keep track of which ground truth boxes have already been matched
-    gt_matched_flags = [False] * len(ground_truths)
+    gt_matched_flags: List[bool] = [False] * len(ground_truths)
     
     # Group ground truths by class for faster lookups during matching
-    gt_by_class = defaultdict(list)
+    gt_by_class: Dict[int, List[Tuple[int, GroundTruth]]] = defaultdict(list)
     for i, gt in enumerate(ground_truths):
         gt_by_class[gt['cls']].append((i, gt)) # Store original index and the gt object
 
@@ -102,8 +114,8 @@ def match_predictions(predictions, ground_truths, iou_threshold, class_names_map
         class_name = class_names_map.get(pred_class_id, f"ID_{pred_class_id}")
         pred['class_name'] = class_name # Add class name for convenience
 
-        best_match_gt_idx = -1
-        max_iou = -1
+        best_match_gt_idx: int = -1
+        max_iou: float = -1.0
 
         # Search for the best matching ground truth of the same class
         if pred_class_id in gt_by_class:
@@ -117,10 +129,14 @@ def match_predictions(predictions, ground_truths, iou_threshold, class_names_map
         
         # If a good enough match is found, it's a True Positive
         if max_iou >= iou_threshold:
-            stats[class_name]['TP'] += 1
-            gt_matched_flags[best_match_gt_idx] = True  # Mark this GT as used
-            pred['matched_gt_xyxy'] = ground_truths[best_match_gt_idx]['xyxy'] 
-            tp_details.append(pred)
+            if best_match_gt_idx != -1: # Ensure a valid index was found
+                stats[class_name]['TP'] += 1
+                gt_matched_flags[best_match_gt_idx] = True  # Mark this GT as used
+                pred['matched_gt_xyxy'] = ground_truths[best_match_gt_idx]['xyxy'] 
+                tp_details.append(pred)
+            else: # Should not happen if max_iou is >= threshold, but as a safeguard
+                stats[class_name]['FP'] += 1
+                fp_details.append(pred)
         else:
             # Otherwise, it's a False Positive
             stats[class_name]['FP'] += 1
@@ -132,8 +148,9 @@ def match_predictions(predictions, ground_truths, iou_threshold, class_names_map
         if not is_matched:
             gt = ground_truths[i]
             class_name = class_names_map.get(gt['cls'])
-            gt['class_name'] = class_name
-            stats[class_name]['FN'] += 1
-            fn_details.append(gt)
+            if class_name: # Ensure class name exists before assignment
+                gt['class_name'] = class_name
+                stats[class_name]['FN'] += 1
+                fn_details.append(gt)
 
     return stats, tp_details, fp_details, fn_details

@@ -31,14 +31,16 @@ Here is an example of the model detecting and counting coins in an image:
 
 * **Modular Configuration**: Key parameters are centralized in `config.py`, and class names are defined separately in `classes_names.yaml`, decoupling the project logic from the dataset structure.
 * **Flexible Data Handling**: Supports automatic data splitting by ratio or using pre-defined `train/valid/test` folders. The script can also recursively discover `images`/`labels` folders in nested subdirectories.
-* **Image Quality Checks**:
-    * **Blur Detection**: Automatically analyzes input images for blurriness using Laplacian variance and logs a warning for low-quality images that may lead to inaccurate detections.
-    * **Edge Detection Warning**: Logs a warning for detected coins that touch the edge of the image, as their detection may be unreliable.
+* **Advanced Image Quality Checks**:
+    * **Blur Detection**: Automatically analyzes input images for blurriness using Laplacian variance and logs a warning for low-quality images.
+    * **Darkness Detection**: Checks for underexposed images by calculating the average pixel intensity and warns if an image is too dark.
+    * **Sharp Angle Warning**: Warns if an image was likely taken from a sharp angle by analyzing the aspect ratio of a significant percentage of detected objects.
+    * **Cut-off Coin Detection**: Logs a warning for detected coins that touch the edge of the image, as their detection may be unreliable.
 * **Advanced Post-Processing**: Includes a customizable pipeline to improve model accuracy by filtering predictions based on:
     * Per-class confidence thresholds.
     * Bounding box aspect ratio.
     * Optimized Non-Maximum Suppression (NMS).
-* **In-Depth Evaluation**: The evaluation script generates a multi-sheet Excel report comparing model performance before and after the post-processing pipeline, providing deep insights into the model's behavior.
+* **In-Depth Evaluation & Comparison**: The evaluation script generates a multi-sheet Excel report comparing model performance before and after the post-processing pipeline. It can also evaluate multiple models in a single run, generating a side-by-side summary report for easy comparison.
 * **Error Analysis**: Automatically saves images of incorrect predictions (False Positives and False Negatives) for visual inspection and debugging.
 * **Automated Cloud Workflow**: Includes a Kaggle notebook for automated setup, training, evaluation, and results packaging on cloud GPUs.
 * **Reproducible Environments**: Provides dedicated environment files (`ultralytics_wsl_env.yml` and `ultralytics_win_env.yml`) for reproducible setups on both Linux/WSL and native Windows.
@@ -62,7 +64,7 @@ The project will recursively find all sibling `images` and `labels` folders with
 ```
 IsraeliCoinsCount/
 ├── BestModels/
-│   └── yolov8n_v5.pt
+│   └── yolov8n_v6.pt
 ├── Data/
 │   └── CoinCount.v54/
 │       ├── data.yaml
@@ -168,12 +170,12 @@ Once your environment is set up and activated, all workflows are controlled by `
 ### 3. Evaluating an Existing Model
 
 1.  In `config.py`, set `EPOCHS = 0`.
-2.  Set `MODEL_PATH_FOR_PREDICTION` to the path of your trained model (e.g., `BestModels/yolov8n_v5.pt`). You can also point it to a directory containing multiple `.pt` files to evaluate them all sequentially.
+2.  Set `MODEL_PATH_FOR_PREDICTION` to the path of your trained model (e.g., `BestModels/yolov8n_v6.pt`). You can also point it to a directory containing multiple `.pt` files to evaluate them all sequentially.
 3.  Run the script:
     ```bash
     python train.py
     ```
-    A unique evaluation folder will be created in `experiment_results/direct_evaluation_runs/`, containing detailed reports and error images.
+    A unique evaluation folder will be created in `experiment_results/direct_evaluation_runs/`. If you evaluated a directory of models, this folder will also contain a `multi-model_evaluation_summary.xlsx` file comparing their performance.
 
 ### 4. Running Inference on New Images
 
@@ -204,7 +206,7 @@ Once your environment is set up and activated, all workflows are controlled by `
     # Visualize a random sample of 10 images
     python visualize_dataset.py --num_images 10
     ```
-* **Preprocess Dataset**: To convert your entire dataset to grayscale (if needed), enable it in `config.py` and run:
+* **Preprocess Dataset**: To convert your entire dataset to grayscale (if enabled in `config.py`), run the `preprocess_dataset.py` script. This will create a new, processed version of your dataset.
     ```bash
     python preprocess_dataset.py
     ```

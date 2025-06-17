@@ -1,7 +1,11 @@
 import logging
 import torch
+import numpy as np
 from pathlib import Path
 from ultralytics.utils import metrics as ultralytics_metrics
+from typing import List, Dict, Any, Optional
+from types import ModuleType
+
 from utils import plot_readable_confusion_matrix, calculate_prf1
 
 class DetectionMetricsCalculator:
@@ -9,7 +13,7 @@ class DetectionMetricsCalculator:
     Calculates detection metrics like Precision, Recall, F1-score by deriving
     them from a confusion matrix.
     """
-    def __init__(self, class_names_map, logger=None, config_module=None):
+    def __init__(self, class_names_map: Dict[int, str], logger: Optional[logging.Logger] = None, config_module: Optional[ModuleType] = None) -> None:
         """
         Initializes the DetectionMetricsCalculator.
         Args:
@@ -27,12 +31,12 @@ class DetectionMetricsCalculator:
         # Default to a common value (e.g., 0.45, which is Ultralytics' default for CM) if not specified,
         # though your config.py already has BOX_MATCHING_IOU_THRESHOLD.
         iou_threshold_for_cm = 0.45 # Default fallback
-        if self.config and hasattr(self.config, 'BOX_MATCHING_IOU_THRESHOLD'): #
-            iou_threshold_for_cm = self.config.BOX_MATCHING_IOU_THRESHOLD #
-            self.logger.info(f"Using BOX_MATCHING_IOU_THRESHOLD: {iou_threshold_for_cm} for Ultralytics ConfusionMatrix.") #
+        if self.config and hasattr(self.config, 'BOX_MATCHING_IOU_THRESHOLD'):
+            iou_threshold_for_cm = self.config.BOX_MATCHING_IOU_THRESHOLD
+            self.logger.info(f"Using BOX_MATCHING_IOU_THRESHOLD: {iou_threshold_for_cm} for Ultralytics ConfusionMatrix.")
         else:
             self.logger.warning( #
-                f"BOX_MATCHING_IOU_THRESHOLD not found in config. Using default IoU {iou_threshold_for_cm} for Ultralytics ConfusionMatrix." #
+                f"BOX_MATCHING_IOU_THRESHOLD not found in config. Using default IoU {iou_threshold_for_cm} for Ultralytics ConfusionMatrix."
             )
 
         # Initialize Ultralytics Confusion Matrix. It is now the single source of truth for metrics.
@@ -40,9 +44,9 @@ class DetectionMetricsCalculator:
             nc=self.num_classes, 
             iou_thres=iou_threshold_for_cm 
         )
-        self.logger.info(f"MetricsCalculator initialized for {self.num_classes} classes. Ultralytics CM is ready with IoU threshold: {iou_threshold_for_cm}.") #
+        self.logger.info(f"MetricsCalculator initialized for {self.num_classes} classes. Ultralytics CM is ready with IoU threshold: {iou_threshold_for_cm}.")
 
-    def update_confusion_matrix(self, predictions_for_image, ground_truths_for_image):
+    def update_confusion_matrix(self, predictions_for_image: List[Dict[str, Any]], ground_truths_for_image: List[Dict[str, Any]]) -> None:
         """
         Updates the internal confusion matrix with data from a single image.
         Args:
@@ -74,23 +78,20 @@ class DetectionMetricsCalculator:
         self.ultralytics_cm.process_batch(preds_tensor, gt_bboxes_tensor, gt_cls_tensor)
 
 
-    def compute_metrics(self, eval_output_dir: Path = None):
+    def compute_metrics(self, eval_output_dir: Optional[Path] = None) -> Dict[str, Any]:
         """
         Computes all metrics by deriving stats from the confusion matrix and handles plotting.
         Args:
             eval_output_dir (Path, optional): Directory to save plots.
         """
-        results = {'per_class': {}, 'overall': {}, 'confusion_matrix_data': None, 'confusion_matrix_plot_path_info': None}
+        results: Dict[str, Any] = {'per_class': {}, 'overall': {}, 'confusion_matrix_data': None, 'confusion_matrix_plot_path_info': None}
         
-        matrix = self.ultralytics_cm.matrix
+        matrix: Optional[np.ndarray] = self.ultralytics_cm.matrix
         if matrix is None:
             self.logger.error("Cannot compute metrics: Confusion Matrix has not been populated.")
             return results
         
-        metrics_to_calculate = ['precision', 'recall', 'f1_score']
-        self.logger.info(f"Computing base metrics: {metrics_to_calculate} and confusion matrix.")
-
-        total_tp, total_fp, total_fn, total_gt = 0, 0, 0, 0
+        total_tp, total_fp, total_fn, total_gt = 0.0, 0.0, 0.0, 0.0
 
         # Derive TP, FP, FN for each class from the matrix
         for i in range(self.num_classes):
@@ -103,19 +104,20 @@ class DetectionMetricsCalculator:
 
             # Use the centralized utility function
             class_metrics_set = calculate_prf1(tp, fp, fn)
-            results['per_class'][class_name] = {'TP': int(tp), 'FP': int(fp), 'FN': int(fn), 'GT_count': int(gt)}
-            for metric_name in metrics_to_calculate:
-                if metric_name in class_metrics_set:
-                    results['per_class'][class_name][metric_name] = class_metrics_set[metric_name]
+            results['per_class'][class_name] = {'TP': int(tp), 'FP': int(fp), 'FN': int(fn), 'GT_count': int(gt), **class_metrics_set}
             
-            total_tp += tp; total_fp += fp; total_fn += fn; total_gt += gt
+            total_tp += tp
+            total_fp += fp
+            total_fn += fn
+            total_gt += gt
 
-        # Use the centralized utility function for overall metrics
         overall_metrics = calculate_prf1(total_tp, total_fp, total_fn)
-        results['overall'] = {'TP': int(total_tp), 'FP': int(total_fp), 'FN': int(total_fn), 'GT_count': int(total_gt)}
-        for name in metrics_to_calculate:
-            if name in overall_metrics:
-                 results['overall'][f"{name}_micro"] = overall_metrics[name]
+        results['overall'] = {
+            'TP': int(total_tp), 'FP': int(total_fp), 'FN': int(total_fn), 'GT_count': int(total_gt),
+            'precision_micro': overall_metrics['precision'],
+            'recall_micro': overall_metrics['recall'],
+            'f1_score_micro': overall_metrics['f1_score']
+        }
 
         self.logger.info(f"Raw Confusion Matrix data:\n{matrix}")
         results['confusion_matrix_data'] = matrix.tolist()

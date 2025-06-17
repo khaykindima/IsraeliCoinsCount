@@ -1,228 +1,111 @@
-"""
-evaluate_model.py
-
-This module defines the YoloEvaluator class, responsible for conducting a
-detailed performance evaluation of a trained model. It compares predictions against
-ground truths, calculates metrics both before and after custom post-processing,
-and generates comprehensive reports including an Excel summary and images of
-incorrect predictions.
-"""
+import argparse
 import logging
+import random
 from pathlib import Path
 import cv2
-import json
-from collections import Counter
-import pandas as pd
+import numpy as np
+from typing import List, Tuple, Dict, Any, Optional
 
+# Project-specific modules
 import config
-from bbox_utils import match_predictions, calculate_iou, calculate_aspect_ratio
 from utils import (
+    setup_logging,
+    discover_and_pair_image_labels,
     parse_yolo_annotations,
-    draw_error_annotations,
-    calculate_prf1
+    draw_ground_truth_boxes,
+    get_class_map_from_yaml
 )
-from metrics_calculator import DetectionMetricsCalculator
 
-class YoloEvaluator:
+def main() -> None:
     """
-    Orchestrates the detailed evaluation of a YOLO model's performance.
+    Main function to run the ground truth visualization process.
     """
-    def __init__(self, detector, logger, config_module=config):
-        """Initializes the YoloEvaluator."""
-        self.logger = logger
-        self.config = config_module
-        self.detector = detector
+    # Convert string paths from config to Path objects for the rest of the script
+    config.INPUTS_DIR = Path(config.INPUTS_DIR)
+    config.OUTPUT_DIR = Path(config.OUTPUT_DIR)
+    
+    parser = argparse.ArgumentParser(description="Visualize ground truth labels on images from the dataset.")
+    parser.add_argument(
+        "--num_images",
+        type=int,
+        default=None,
+        help="Number of random images to generate. If not specified, all images in the input folder will be processed."
+    )
+    args: argparse.Namespace = parser.parse_args()
 
-    def perform_detailed_evaluation(self, eval_output_dir, all_image_label_pairs_eval):
-        """
-        Performs a full evaluation loop, generating metrics and reports.
-        This is the main orchestration method for the evaluation process.
-        """
-        model_path = self.detector.model_path
-        class_names = self.detector.class_names_map
-        self.logger.info(f"--- Starting Detailed Evaluation for Model: {model_path} on {len(all_image_label_pairs_eval)} images ---")
+    # Create a dedicated output directory for these visualizations
+    output_dir: Path = config.OUTPUT_DIR / "ground_truth_visualizations"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Setup logger
+    log_file_path: Path = output_dir / "visualization_log.log"
+    logger: logging.Logger = setup_logging(log_file_path, logger_name='gt_visualizer_logger')
+    logger.info("--- Starting Ground Truth Visualization ---")
+    logger.info(f"Output will be saved to: {output_dir}")
+
+    # --- Step 1: Load Class Names ---
+    class_names_map: Optional[Dict[int, str]] = get_class_map_from_yaml(config, logger)
+    if not class_names_map:
+        return
+
+    # --- Step 2: Discover all image-label pairs ---
+    image_label_pairs: List[Tuple[Path, Path]]
+    image_label_pairs, _ = discover_and_pair_image_labels(
+        config.INPUTS_DIR, config.IMAGE_SUBDIR_BASENAME, config.LABEL_SUBDIR_BASENAME, logger
+    )
+    if not image_label_pairs:
+        logger.error("No image-label pairs were found. Please check your INPUTS_DIR configuration.")
+        return
+    logger.info(f"Found a total of {len(image_label_pairs)} image-label pairs.")
+
+    # --- Step 3: Select images to process (all by default) ---
+    pairs_to_process: List[Tuple[Path, Path]]
+    if args.num_images is None:
+        # If no number is specified, process all images
+        pairs_to_process = image_label_pairs
+        logger.info(f"Processing all {len(pairs_to_process)} images...")
+    else:
+        # If a number is specified, process a random sample
+        num_to_sample = min(args.num_images, len(image_label_pairs))
+        logger.info(f"Randomly sampling {num_to_sample} images for visualization...")
+        pairs_to_process = random.sample(image_label_pairs, num_to_sample)
+    
+    processed_count = 0
+    for img_path, lbl_path in pairs_to_process:
+        logger.debug(f"Processing: {img_path.name}")
         
-        # Setup output directory for incorrect prediction images
-        incorrect_dir = eval_output_dir / self.config.INCORRECT_PREDICTIONS_SUBDIR
-        incorrect_dir.mkdir(parents=True, exist_ok=True)
+        # Read the image
+        image_np: Optional[np.ndarray] = cv2.imread(str(img_path))
+        if image_np is None:
+            logger.warning(f"Could not read image {img_path}, skipping.")
+            continue
         
-        # Initialize metrics containers
-        metrics_calc = DetectionMetricsCalculator(class_names, self.logger, self.config)
-        agg_stats_before = {name: {'TP': 0, 'FP': 0, 'FN': 0} for name in class_names.values()}
-        agg_stats_after = {name: {'TP': 0, 'FP': 0, 'FN': 0} for name in class_names.values()}
-        all_correctness_data = []
-        error_count_before, error_count_after = 0, 0
+        h, w, _ = image_np.shape
         
-        # Main loop over all evaluation images
-        for img_path, lbl_path in all_image_label_pairs_eval:
-            results = self._process_single_image(img_path, lbl_path, class_names)
-            if not results: continue
-
-            # Aggregate statistics from the single image results
-            for cn in class_names.values():
-                for metric in ['TP', 'FP', 'FN']:
-                    agg_stats_before[cn][metric] += results['stats_before'][cn][metric]
-                    agg_stats_after[cn][metric] += results['stats_after'][cn][metric]
-            
-            self._update_correctness_list(all_correctness_data, img_path.name, results['tp_after'], results['fp_after'], results['fn_after'])
-            metrics_calc.update_confusion_matrix(results['preds_after'], results['gts'])
-            
-            # Log and save error images
-            error_count_before += 1 if (any(results['fp_before']) or any(results['fn_before'])) else 0
-            if any(results['fp_after']) or any(results['fn_after']):
-                error_count_after += 1
-                self._log_and_save_errors(results['image'], img_path, results['fp_after'], results['fn_after'], results['gts'], results['preds_after'], incorrect_dir)
-
-        # --- Final Reporting ---
-        final_metrics_ucm = metrics_calc.compute_metrics(eval_output_dir=eval_output_dir)
-        self._log_console_summaries(len(all_image_label_pairs_eval), class_names, agg_stats_before, agg_stats_after, final_metrics_ucm, error_count_before, error_count_after)
-        self._generate_consolidated_excel_report(eval_output_dir, class_names, agg_stats_before, agg_stats_after, final_metrics_ucm, all_correctness_data, error_count_before, error_count_after)
+        # Parse the corresponding YOLO annotation file
+        annotations: List[Tuple[int, float, float, float, float]] = parse_yolo_annotations(lbl_path, logger)
+        if not annotations:
+            logger.warning(f"No annotations found in {lbl_path}. A blank image will be saved.")
         
-        self.logger.info(f"Saved final Ultralytics CM metrics dictionary to: {eval_output_dir / 'final_evaluation_metrics_ultralytics_cm.json'}")
-        
-        return self._prepare_summary_for_return(agg_stats_after, error_count_after)
+        # Convert YOLO format to the format needed by our drawing function
+        ground_truths: List[Dict[str, Any]] = []
+        for cid, cx, cy, cw, ch in annotations:
+            # Denormalize coordinates to get pixel values
+            x1 = (cx - cw / 2) * w
+            y1 = (cy - ch / 2) * h
+            x2 = (cx + cw / 2) * w
+            y2 = (cy + ch / 2) * h
+            ground_truths.append({'cls': cid, 'xyxy': [x1, y1, x2, y2]})
 
-    def _process_single_image(self, img_path, lbl_path, class_names_map):
-        """Helper to process one image: read, predict, and match to ground truths."""
-        original_img = cv2.imread(str(img_path))
-        if original_img is None:
-            self.logger.warning(f"Could not read image {img_path}, skipping.")
-            return None
-        
-        preds_after, preds_before = self.detector.predict(original_img.copy(), return_raw=True, image_name=img_path.name)
-        
-        h, w = original_img.shape[:2]
-        gts_raw = parse_yolo_annotations(lbl_path, self.logger)
-        ground_truths = [{'cls': cid, 'xyxy': [(cx-cw/2)*w, (cy-ch/2)*h, (cx+cw/2)*w, (cy+ch/2)*h]} for cid, cx, cy, cw, ch in gts_raw]
-        
-        stats_b, _, fp_b, fn_b = match_predictions(preds_before, ground_truths, self.config.BOX_MATCHING_IOU_THRESHOLD, class_names_map)
-        stats_a, tp_a, fp_a, fn_a = match_predictions(preds_after, ground_truths, self.config.BOX_MATCHING_IOU_THRESHOLD, class_names_map)
-        
-        return {
-            'image': original_img, 'preds_after': preds_after, 'gts': ground_truths,
-            'stats_before': stats_b, 'stats_after': stats_a,
-            'fp_before': fp_b, 'fn_before': fn_b,
-            'tp_after': tp_a, 'fp_after': fp_a, 'fn_after': fn_a
-        }
+        # Draw the ground truth boxes on the image
+        annotated_image: np.ndarray = draw_ground_truth_boxes(image_np, ground_truths, class_names_map, config)
 
-    def _update_correctness_list(self, all_data, image_name, tps, fps, fns):
-        """Helper to populate the list used for the detailed Excel report."""
-        for pred in tps: 
-            all_data.append({'image_name': image_name, 'class_name': pred['class_name'], 'probability': pred['conf'], 'pred_aspect_ratio': calculate_aspect_ratio(pred['xyxy']),'gt_aspect_ratio': calculate_aspect_ratio(pred['matched_gt_xyxy']), 'box_correctness': 'TP'})
-        for pred in fps: 
-            all_data.append({'image_name': image_name, 'class_name': pred['class_name'], 'probability': pred['conf'], 'pred_aspect_ratio': calculate_aspect_ratio(pred['xyxy']), 'gt_aspect_ratio': None, 'box_correctness': 'FP'})
-        for gt in fns: 
-            all_data.append({'image_name': image_name, 'class_name': gt['class_name'], 'probability': None,'pred_aspect_ratio': None, 'gt_aspect_ratio': calculate_aspect_ratio(gt['xyxy']), 'box_correctness': 'FN'})
+        # Save the final annotated image
+        save_path: Path = output_dir / img_path.name
+        cv2.imwrite(str(save_path), annotated_image)
+        processed_count += 1
 
-    def _log_and_save_errors(self, image, img_path, fps, fns, gts, preds, output_dir):
-        """Helper to log incorrect prediction details and save the error image."""
-        class_names_map = self.detector.class_names_map
-        gt_counts = Counter(g['cls'] for g in gts)
-        pred_counts = Counter(p['cls'] for p in preds)
-        gt_str = ", ".join([f"{count}x {class_names_map[name]}" for name, count in sorted(gt_counts.items())])
-        pred_str = ", ".join([f"{count}x {class_names_map[name]}" for name, count in sorted(pred_counts.items())])
-        
-        self.logger.warning(f"Incorrect Prediction in: {img_path.name}\n  - Ground Truth: [{gt_str}]\n  - Predicted (Post-Filter): [{pred_str}]")
-        annotated_img = draw_error_annotations(image.copy(), fps, fns, class_names_map, self.config)
-        cv2.imwrite(str(output_dir / img_path.name), annotated_img)
+    logger.info(f"--- Visualization complete. {processed_count} images saved in {output_dir} ---")
 
-    def _log_console_summaries(self, total_images, class_names_map, stats_before, stats_after, final_metrics_ucm, error_count_before, error_count_after):
-        """Helper to log clear, well-formatted summaries to the console."""
-        per_class_ucm = final_metrics_ucm.get('per_class', {})
-        overall_ucm = final_metrics_ucm.get('overall', {})
-
-        self.logger.info("--- Image Error Summary ---")
-        self.logger.info(f"Total images with errors (Before Post-Processing): {error_count_before} / {total_images}")
-        self.logger.info(f"Total images with errors (After Post-Processing):  {error_count_after} / {total_images}")
-        self.logger.info("-" * 70)
-        
-        self.logger.info("--- Metrics Summary ---")
-        for cid in sorted(class_names_map.keys()):
-            name = class_names_map[cid]
-            sbc, sac, sau_pc = stats_before.get(name, {}), stats_after.get(name, {}), per_class_ucm.get(name, {})
-            prf1_sbc, prf1_sac = calculate_prf1(sbc.get('TP',0), sbc.get('FP',0), sbc.get('FN',0)), calculate_prf1(sac.get('TP',0), sac.get('FP',0), sac.get('FN',0))
-            
-            self.logger.info(f"Class: {name}")
-            self.logger.info(f"  - Before (Custom Match): TP: {sbc.get('TP',0)}, FP: {sbc.get('FP',0)}, FN: {sbc.get('FN',0)}, P: {prf1_sbc['precision']:.4f}, R: {prf1_sbc['recall']:.4f}, F1: {prf1_sbc['f1_score']:.4f}")
-            self.logger.info(f"  - After (Custom Match):  TP: {sac.get('TP',0)}, FP: {sac.get('FP',0)}, FN: {sac.get('FN',0)}, P: {prf1_sac['precision']:.4f}, R: {prf1_sac['recall']:.4f}, F1: {prf1_sac['f1_score']:.4f}")
-            self.logger.info(f"  - After (Ultralytics CM):TP: {sau_pc.get('TP',0)}, FP: {sau_pc.get('FP',0)}, FN: {sau_pc.get('FN',0)}, P: {sau_pc.get('precision',0):.4f}, R: {sau_pc.get('recall',0):.4f}, F1: {sau_pc.get('f1_score',0):.4f}")
-        
-        self.logger.info("-" * 70)
-        self.logger.info(f"Overall (Ultralytics CM - Micro): P: {overall_ucm.get('precision_micro',0):.4f}, R: {overall_ucm.get('recall_micro',0):.4f}, F1: {overall_ucm.get('f1_score_micro',0):.4f}")
-        self.logger.info("-" * 70)
-
-    def _generate_consolidated_excel_report(self, eval_output_dir, class_names_map, stats_before, stats_after, final_metrics_ucm, correctness_data, err_before, err_after):
-        """Helper to generate the final multi-sheet Excel report."""
-        excel_path = eval_output_dir / "evaluation_summary.xlsx"
-        try:
-            with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
-                self._build_summary_metrics_sheet(writer, class_names_map, stats_before, stats_after, final_metrics_ucm, err_before, err_after)
-                self._build_detailed_detections_sheet(writer, correctness_data)
-        except Exception as e:
-            self.logger.error(f"Failed to generate consolidated Excel report: {e}. Ensure 'openpyxl' is installed.")
-
-    def _build_summary_metrics_sheet(self, writer, class_names_map, stats_before, stats_after, final_metrics_ucm, err_before, err_after):
-        """Builds and writes the summary metrics DataFrame to an Excel sheet."""
-        per_class_ucm = final_metrics_ucm.get('per_class', {})
-        overall_ucm = final_metrics_ucm.get('overall', {})
-        summary_data = []
-
-        for cid in sorted(class_names_map.keys()):
-            name = class_names_map[cid]
-            row = {('Class', ''): name}
-            row.update(self._prepare_metrics_row(stats_before.get(name, {}), 'Before (Custom)'))
-            row.update(self._prepare_metrics_row(stats_after.get(name, {}), 'After (Custom)'))
-            row.update(self._prepare_metrics_row(per_class_ucm.get(name, {}), 'After (Ultralytics)'))
-            summary_data.append(row)
-
-        overall_sbc = {m: sum(s.get(m, 0) for s in stats_before.values()) for m in ['TP', 'FP', 'FN']}
-        overall_sac = {m: sum(s.get(m, 0) for s in stats_after.values()) for m in ['TP', 'FP', 'FN']}
-        overall_sau_excel = {'TP': overall_ucm.get('TP', 0), 'FP': overall_ucm.get('FP', 0), 'FN': overall_ucm.get('FN', 0), 'precision': overall_ucm.get('precision_micro', 0), 'recall': overall_ucm.get('recall_micro', 0), 'f1_score': overall_ucm.get('f1_score_micro', 0)}
-        
-        overall_row = {('Class', ''): 'Overall (Micro)'}
-        overall_row.update(self._prepare_metrics_row(overall_sbc, 'Before (Custom)', err_before))
-        overall_row.update(self._prepare_metrics_row(overall_sac, 'After (Custom)', err_after))
-        overall_row.update(self._prepare_metrics_row(overall_sau_excel, 'After (Ultralytics)'))
-        summary_data.append(overall_row)
-        
-        df_metrics = pd.DataFrame(summary_data)
-        df_metrics.columns = pd.MultiIndex.from_tuples(df_metrics.columns)
-        df_metrics = df_metrics.set_index(('Class', ''))
-        df_metrics.index.name = 'Class'
-
-        metric_order = ['TP', 'FP', 'FN', 'Precision', 'Recall', 'F1-Score', 'Images with Errors']
-        prefixes = [p for p in ['Before (Custom)', 'After (Custom)', 'After (Ultralytics)'] if (p, 'TP') in df_metrics.columns]
-        final_column_order = [(prefix, metric) for prefix in prefixes for metric in metric_order if (prefix, metric) in df_metrics.columns]
-        
-        df_metrics[final_column_order].to_excel(writer, sheet_name='Class Metrics Summary')
-
-    def _build_detailed_detections_sheet(self, writer, detection_data):
-        """Builds and writes the detailed detections DataFrame to an Excel sheet."""
-        if not detection_data: return
-        df_detections = pd.DataFrame(detection_data)
-        column_order = ['image_name', 'class_name', 'probability', 'pred_aspect_ratio', 'gt_aspect_ratio', 'box_correctness']
-        df_detections = df_detections[column_order].sort_values(by=['image_name', 'box_correctness', 'probability'], ascending=[True, True, False])
-        df_detections.to_excel(writer, sheet_name='Detailed Detections', index=False)
-
-    def _prepare_metrics_row(self, stats, prefix, error_count=None): 
-        """Helper to format a single row of metrics for the summary DataFrame."""
-        tp, fp, fn = stats.get('TP', 0), stats.get('FP', 0), stats.get('FN', 0)
-        
-        if 'precision' in stats: # Use pre-calculated metrics if available
-            p, r, f1 = stats['precision'], stats['recall'], stats['f1_score']
-        else: # Calculate on-the-fly otherwise
-            prf1 = calculate_prf1(tp, fp, fn)
-            p, r, f1 = prf1['precision'], prf1['recall'], prf1['f1_score']
-
-        row_data = {(prefix, 'TP'): tp, (prefix, 'FP'): fp, (prefix, 'FN'): fn, (prefix, 'Precision'): p, (prefix, 'Recall'): r, (prefix, 'F1-Score'): f1}
-        if error_count is not None:
-            row_data[(prefix, 'Images with Errors')] = error_count
-            
-        return row_data
-
-    def _prepare_summary_for_return(self, stats_after, error_count_after):
-        """Prepares the final summary dictionary to be returned for multi-model comparison."""
-        overall_stats = {m: sum(s.get(m, 0) for s in stats_after.values()) for m in ['TP', 'FP', 'FN']}
-        prf1_overall = calculate_prf1(overall_stats['TP'], overall_stats['FP'], overall_stats['FN'])
-        overall_stats.update({'Precision': prf1_overall['precision'], 'Recall': prf1_overall['recall'], 'F1-Score': prf1_overall['f1_score'], 'Images with Errors': error_count_after})
-        return overall_stats
+if __name__ == '__main__':
+    main()

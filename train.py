@@ -5,6 +5,8 @@ from pathlib import Path
 from ultralytics import YOLO
 import pandas as pd
 import shutil
+from typing import List, Tuple, Dict, Any, Optional
+from types import ModuleType
 
 # Project-specific modules
 import config
@@ -19,7 +21,10 @@ from utils import (
 )
 from evaluate_model import YoloEvaluator
 
-def main_train():
+# Define type aliases for clarity
+ImageLabelPair = Tuple[Path, Path]
+
+def main_train() -> None:
     """Main entry point for the training and evaluation script."""
     start_time = time.time()
     
@@ -41,16 +46,20 @@ def main_train():
         config.INPUTS_DIR, config.IMAGE_SUBDIR_BASENAME, config.LABEL_SUBDIR_BASENAME, logger
     )
     if not image_label_pairs:
-        raise FileNotFoundError("No image-label pairs found. Check INPUTS_DIR and its structure.")
+        logger.error("No image-label pairs found. Check INPUTS_DIR and its structure.")
+        return
 
-    class_names_map, num_classes = load_or_derive_class_names(logger)
-    if num_classes == 0:
-        raise ValueError("Number of classes is zero. Cannot proceed.")
-
+    class_names_map_optional = get_class_map_from_yaml(config, logger)
+    if not class_names_map_optional:
+        logger.error("Failed to load class names. Exiting.")
+        return
+    class_names_map: Dict[int, str] = class_names_map_optional
+    num_classes = len(class_names_map)
+    
     logger.info(f"Final number of classes: {num_classes}")
     logger.info(f"Class names map: {class_names_map}")
 
-    run_dir = None
+    run_dir: Optional[Path] = None
     final_log_name = "final_run_log.log"
 
     if is_training_mode:
@@ -75,22 +84,18 @@ def main_train():
         except Exception as e:
             print(f"ERROR: Failed to move log file: {e}")
 
-
-def load_or_derive_class_names(logger):
-    """Loads class names from the required YAML file or raises an error if not found."""
-    class_names_map = get_class_map_from_yaml(config, logger)
-    
-    if class_names_map:
-        return class_names_map, len(class_names_map)
-    else:
-        raise FileNotFoundError(
-            f"CRITICAL: The class names file '{config.CLASS_NAMES_YAML}' was not found or is invalid. "
-            f"This file is required for all operations."
-        )
-
-def run_training_workflow(pairs, class_names_map, num_classes, logger):
+def run_training_workflow(
+    pairs: List[ImageLabelPair], 
+    class_names_map: Dict[int, str], 
+    num_classes: int, 
+    logger: logging.Logger
+) -> Path:
     """Orchestrates the model training process."""
     logger.info("--- Starting Training Workflow ---")
+    
+    train_rel_img_dirs: List[str]
+    val_rel_img_dirs: List[str]
+    test_rel_img_dirs: List[str]
 
     if config.USE_PREDEFINED_SPLITS:
         logger.info("Configuration set to use pre-defined splits.")
@@ -110,13 +115,7 @@ def run_training_workflow(pairs, class_names_map, num_classes, logger):
         # Assumes structure like .../train/images, .../train/labels
         train_rel_img_dirs = [str(Path('train') / config.IMAGE_SUBDIR_BASENAME)]
         val_rel_img_dirs = [str(Path('valid') / config.IMAGE_SUBDIR_BASENAME)]
-        
-        if test_dir.is_dir():
-            logger.info("Found optional 'test' directory.")
-            test_rel_img_dirs = [str(Path('test') / config.IMAGE_SUBDIR_BASENAME)]
-        else:
-            logger.info("Optional 'test' directory not found.")
-            test_rel_img_dirs = []
+        test_rel_img_dirs = [str(Path('test') / config.IMAGE_SUBDIR_BASENAME)] if test_dir.is_dir() else []
     else:
         logger.info("Configuration set to split all discovered data based on ratios.")
         # --- Data Splitting and YAML Creation (Original Logic) ---
@@ -198,14 +197,18 @@ def run_training_workflow(pairs, class_names_map, num_classes, logger):
     return run_dir
 
 
-def run_direct_evaluation_workflow(pairs, class_names_map, logger):
+def run_direct_evaluation_workflow(
+    pairs: List[ImageLabelPair], 
+    class_names_map: Dict[int, str], 
+    logger: logging.Logger
+) -> Optional[Path]:
     """Orchestrates direct evaluation of one or more pre-trained models."""
     logger.info("--- Starting Direct Evaluation Workflow ---")
     model_path_str = config.MODEL_PATH_FOR_PREDICTION
     model_path_obj = Path(model_path_str)
     base_dir = config.OUTPUT_DIR / "direct_evaluation_runs"
 
-    run_dir = None
+    run_dir: Path
     if model_path_obj.is_dir():
         logger.info(f"Detected folder path. Evaluating all models in: {model_path_obj}")
         run_dir = base_dir / model_path_obj.name
@@ -217,7 +220,7 @@ def run_direct_evaluation_workflow(pairs, class_names_map, logger):
             logger.error(f"No model files (.pt) found in directory: {model_path_obj}")
             return run_dir
             
-        summary_results = []
+        summary_results: List[Dict[str, Any]] = []
         for model_file in model_files:
             logger.info(f"--- Evaluating model: {model_file.name} ---")
             # Create a specific sub-directory for this model's detailed reports
@@ -246,8 +249,7 @@ def run_direct_evaluation_workflow(pairs, class_names_map, logger):
     
     return run_dir
 
-
-def _find_best_model(model, run_dir, logger):
+def _find_best_model(model: YOLO, run_dir: Path, logger: logging.Logger) -> Optional[Path]:
     """Finds the path to the best trained model weights."""
     if hasattr(model, 'trainer') and hasattr(model.trainer, 'best') and Path(model.trainer.best).exists():
         path = Path(model.trainer.best).resolve()
@@ -260,7 +262,13 @@ def _find_best_model(model, run_dir, logger):
     logger.warning(f"No best model found in {run_dir}. Check training outputs.")
     return None
 
-def _run_single_evaluation(model_path_obj, class_names_map, pairs, output_dir, logger):
+def _run_single_evaluation(
+    model_path_obj: Path, 
+    class_names_map: Dict[int, str], 
+    pairs: List[ImageLabelPair], 
+    output_dir: Path, 
+    logger: logging.Logger
+) -> Dict[str, Any]:
     """
     Helper function to run a complete evaluation for a single model and save
     results to a specified directory.
@@ -280,6 +288,10 @@ def _run_single_evaluation(model_path_obj, class_names_map, pairs, output_dir, l
     save_config_to_run_dir(output_dir, logger)
 
     detector = create_detector_from_config(model_path_obj, class_names_map, config, logger)
+    if not detector:
+        logger.error(f"Failed to create detector for model {model_path_obj}. Skipping evaluation.")
+        return {}
+        
     evaluator = YoloEvaluator(detector, logger)
 
     # The detailed evaluation reports (Excel, incorrect predictions) will be saved

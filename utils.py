@@ -9,10 +9,19 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+from typing import List, Tuple, Dict, Any, Optional, Union
+from types import ModuleType
+
 from bbox_utils import calculate_aspect_ratio
 
+# Forward reference for CoinDetector to avoid circular import
+if 'CoinDetector' not in globals():
+    from typing import TYPE_CHECKING
+    if TYPE_CHECKING:
+        from detector import CoinDetector
 
-def check_image_blur(image_np, threshold, logger, image_name):
+
+def check_image_blur(image_np: np.ndarray, threshold: float, logger: logging.Logger, image_name: str) -> None:
     """
     Checks if an image is blurry by calculating the variance of its Laplacian.
     If the variance is below a given threshold, a warning is logged.
@@ -31,7 +40,7 @@ def check_image_blur(image_np, threshold, logger, image_name):
             f"Detection results may be inaccurate."
         )
 
-def check_image_darkness(image_np, threshold, logger, image_name):
+def check_image_darkness(image_np: np.ndarray, threshold: float, logger: logging.Logger, image_name: str) -> None:
     """
     Checks if an image is too dark by calculating the mean of its grayscale pixel values.
     If the mean brightness is below a given threshold, a warning is logged.
@@ -50,7 +59,13 @@ def check_image_darkness(image_np, threshold, logger, image_name):
             f"Detection results may be inaccurate."
         )
 
-def check_sharp_angle(predictions_data, ar_threshold, min_percentage_threshold, logger, image_name):
+def check_sharp_angle(
+    predictions_data: List[Dict[str, Any]], 
+    ar_threshold: float, 
+    min_percentage_threshold: float, 
+    logger: logging.Logger, 
+    image_name: str
+) -> None:
     """
     Checks if an image was potentially taken from a sharp angle by analyzing
     the aspect ratio of detected bounding boxes.
@@ -70,7 +85,7 @@ def check_sharp_angle(predictions_data, ar_threshold, min_percentage_threshold, 
     total_boxes = len(predictions_data)
 
     for pred in predictions_data:
-        aspect_ratio = calculate_aspect_ratio(pred['xyxy']) #
+        aspect_ratio = calculate_aspect_ratio(pred['xyxy'])
         if aspect_ratio > ar_threshold:
             suspicious_boxes_count += 1
 
@@ -84,7 +99,7 @@ def check_sharp_angle(predictions_data, ar_threshold, min_percentage_threshold, 
             )
 
 
-def get_adaptive_drawing_params(image_width, config_module):
+def get_adaptive_drawing_params(image_width: int, config_module: ModuleType) -> Dict[str, Union[int, float]]:
     """
     Calculates drawing parameters scaled to the image size, based on a reference width.
     """
@@ -99,7 +114,7 @@ def get_adaptive_drawing_params(image_width, config_module):
         }
     
     # Calculate the scaling factor based on image width
-    reference_width = getattr(config_module, 'REFERENCE_IMAGE_WIDTH', 4000)
+    reference_width: int = getattr(config_module, 'REFERENCE_IMAGE_WIDTH', 4000)
     scaling_factor = image_width / reference_width
 
     # Clip the scaling factor to prevent parameters from becoming too small on tiny images
@@ -122,7 +137,7 @@ def get_adaptive_drawing_params(image_width, config_module):
 
 
 # Factory function for creating a detector 
-def create_detector_from_config(model_path, class_map, config_module, logger):
+def create_detector_from_config(model_path: Union[str, Path], class_map: Dict[int, str], config_module: ModuleType, logger: logging.Logger) -> 'CoinDetector':
     """
     Creates a fully configured CoinDetector instance from config.
     Args:
@@ -156,7 +171,7 @@ def create_detector_from_config(model_path, class_map, config_module, logger):
     )
     return detector
 
-def convert_to_3channel_grayscale(image_np_or_path, logger_instance=None):
+def convert_to_3channel_grayscale(image_np_or_path: Union[np.ndarray, str, Path], logger_instance: Optional[logging.Logger] = None) -> Optional[np.ndarray]:
     """
     Loads an image if a path is given, converts it to grayscale,
     and then converts the grayscale image to a 3-channel BGR format.
@@ -164,7 +179,7 @@ def convert_to_3channel_grayscale(image_np_or_path, logger_instance=None):
     log = logger_instance if logger_instance else logging.getLogger(__name__)
 
     log.debug(f"Starting image preprocessing for input: {type(image_np_or_path)}")
-    image_np = None
+    image_np: Optional[np.ndarray] = None
     if isinstance(image_np_or_path, (str, Path)):
         if not Path(image_np_or_path).exists():
             log.error(f"Image path does not exist: {image_np_or_path}")
@@ -204,7 +219,7 @@ def convert_to_3channel_grayscale(image_np_or_path, logger_instance=None):
     log.debug("Converted grayscale image to 3-channel BGR for model input. Preprocessing finished.")
     return image_for_model
 
-def draw_ground_truth_boxes(image_np, ground_truths_list, class_names_map, config_module):
+def draw_ground_truth_boxes(image_np: np.ndarray, ground_truths_list: List[Dict[str, Any]], class_names_map: Dict[int, str], config_module: ModuleType) -> np.ndarray:
     """
     Draws ground truth bounding boxes on an image using adaptive settings.
 
@@ -233,14 +248,14 @@ def draw_ground_truth_boxes(image_np, ground_truths_list, class_names_map, confi
         label = f"GT: {class_name}"
         color = box_color_map.get(class_name.lower().strip(), default_box_color)
 
-        cv2.rectangle(img_to_draw_on, (x1, y1), (x2, y2), color, box_thickness)
-        (text_w, text_h), _ = cv2.getTextSize(label, font, font_scale, text_thickness)
+        cv2.rectangle(img_to_draw_on, (x1, y1), (x2, y2), color, int(box_thickness))
+        (text_w, text_h), _ = cv2.getTextSize(label, font, font_scale, int(text_thickness))
         cv2.rectangle(img_to_draw_on, (x1, y1 - text_h - 5), (x1 + text_w, y1), color, -1)
-        cv2.putText(img_to_draw_on, label, (x1, y1 - 5), font, font_scale, (0,0,0), text_thickness)
+        cv2.putText(img_to_draw_on, label, (x1, y1 - 5), font, font_scale, (0,0,0), int(text_thickness))
         
     return img_to_draw_on
 
-def save_config_to_run_dir(run_dir_path, logger):
+def save_config_to_run_dir(run_dir_path: Path, logger: logging.Logger) -> None:
     """Copies config.py to the specified run directory for reproducibility."""
     try:
         # Build path relative to this utils.py file, not the current working directory
@@ -261,7 +276,7 @@ def save_config_to_run_dir(run_dir_path, logger):
 # --- Logger Setup ---
 LOG_FORMATTER = logging.Formatter('%(asctime)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s')
 
-def setup_logging(log_file_path_obj, logger_name='yolo_script_logger'): # Changed default logger name
+def setup_logging(log_file_path_obj: Path, logger_name: str = 'yolo_script_logger') -> logging.Logger:
     """Configures logging to both console and a file for a given logger."""
     logger = logging.getLogger(logger_name)
     
@@ -283,17 +298,24 @@ def setup_logging(log_file_path_obj, logger_name='yolo_script_logger'): # Change
 
 
 # --- Centralized function for creating unique run directories ---
-def create_unique_run_dir(base_dir_pathobj, run_name_prefix):
+def create_unique_run_dir(base_dir_pathobj: Path, run_name_prefix: str) -> Path:
     """Creates a unique run directory by appending a counter."""
     candidate_dir = base_dir_pathobj / run_name_prefix
     counter = 1
+    candidate_dir = base_dir_pathobj / f"{run_name_prefix}"
+    # Initial check for the non-suffixed directory name
+    if not candidate_dir.exists():
+        candidate_dir.mkdir(parents=True, exist_ok=False)
+        return candidate_dir
+    
+    # If it exists, start appending counters
     while candidate_dir.exists():
         candidate_dir = base_dir_pathobj / f"{run_name_prefix}{counter}"
         counter += 1
     candidate_dir.mkdir(parents=True, exist_ok=False)
     return candidate_dir
 
-def validate_config_and_paths(config_module, mode, logger):
+def validate_config_and_paths(config_module: ModuleType, mode: str, logger: logging.Logger) -> bool:
     """Validates key settings from the config module based on the run mode."""
     is_valid = True
     logger.info("--- Validating Configuration ---")
@@ -322,14 +344,19 @@ def validate_config_and_paths(config_module, mode, logger):
 
     return is_valid
 
-def discover_and_pair_image_labels(inputs_dir_pathobj, image_subdir_basename, label_subdir_basename, logger_instance=None):
+def discover_and_pair_image_labels(
+    inputs_dir_pathobj: Path, 
+    image_subdir_basename: str, 
+    label_subdir_basename: str, 
+    logger_instance: Optional[logging.Logger] = None
+) -> Tuple[List[Tuple[Path, Path]], List[Path]]:
     """
     Recursively scans for image and label folders and creates pairs.
     It looks for sibling folders with the specified base names (e.g., 'images' and 'labels').
     """
     log = logger_instance if logger_instance else logging.getLogger(__name__)
-    image_label_pairs = []
-    valid_label_dirs_for_class_scan = []
+    image_label_pairs: List[Tuple[Path, Path]] = []
+    valid_label_dirs_for_class_scan: List[Path] = []
     
     log.info(f"Recursively searching for '{image_subdir_basename}' folders within {inputs_dir_pathobj}...")
 
@@ -359,8 +386,16 @@ def discover_and_pair_image_labels(inputs_dir_pathobj, image_subdir_basename, la
         
     return image_label_pairs, valid_label_dirs_for_class_scan
 
+ImageLabelPair = Tuple[Path, Path]
 
-def split_data(image_label_pairs, train_ratio, val_ratio, test_ratio, seed=42, logger_instance=None):
+def split_data(
+    image_label_pairs: List[ImageLabelPair], 
+    train_ratio: float, 
+    val_ratio: float, 
+    test_ratio: float, 
+    seed: int = 42, 
+    logger_instance: Optional[logging.Logger] = None
+) -> Tuple[List[ImageLabelPair], List[ImageLabelPair], List[ImageLabelPair]]:
     """Splits image-label pairs into train, validation, and test sets."""
     random.seed(seed)
     random.shuffle(image_label_pairs)
@@ -370,17 +405,18 @@ def split_data(image_label_pairs, train_ratio, val_ratio, test_ratio, seed=42, l
     return image_label_pairs[:train_end], image_label_pairs[train_end:val_end], image_label_pairs[val_end:]
 
 
-def load_class_names_from_yaml(yaml_path_obj, logger_instance=None): # Renamed for clarity
+def load_class_names_from_yaml(yaml_path_obj: Path, logger_instance: Optional[logging.Logger] = None) -> Optional[List[str]]:
     """Loads the 'names' list from a YAML file."""
     log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
     if not yaml_path_obj.is_file(): return None
     try:
         with open(yaml_path_obj, 'r') as f: data = yaml.safe_load(f)
-        return data.get('names') if isinstance(data.get('names'), list) else None
+        names = data.get('names')
+        return names if isinstance(names, list) else None
     except Exception:
         return None
 
-def get_class_map_from_yaml(config_module, logger):
+def get_class_map_from_yaml(config_module: ModuleType, logger: logging.Logger) -> Optional[Dict[int, str]]:
     """
     Loads the class names from the project's central YAML file and returns
     it as a dictionary map.
@@ -398,17 +434,26 @@ def get_class_map_from_yaml(config_module, logger):
     logger.info(f"Loaded {len(class_names_map)} class names: {class_names_map}")
     return class_names_map
 
-def create_yolo_dataset_yaml(dataset_root_abs_path_str, train_rel_img_dir_paths, val_rel_img_dir_paths,
-                        test_rel_img_dir_paths, class_names_map, num_classes_val,
-                        output_yaml_path_obj, image_subdir_basename, label_subdir_basename, logger_instance=None): # Renamed for clarity
+def create_yolo_dataset_yaml(
+    dataset_root_abs_path_str: str, 
+    train_rel_img_dir_paths: List[str], 
+    val_rel_img_dir_paths: List[str],
+    test_rel_img_dir_paths: List[str], 
+    class_names_map: Dict[int, str], 
+    num_classes_val: int,
+    output_yaml_path_obj: Path, 
+    image_subdir_basename: str, 
+    label_subdir_basename: str, 
+    logger_instance: Optional[logging.Logger] = None
+) -> None:
     """Creates the dataset.yaml file for YOLO training."""
     log = logger_instance if logger_instance else logging.getLogger('yolo_script_logger')
     names = [class_names_map.get(i, f"class_{i}") for i in range(num_classes_val)]
     data = {
         'path': dataset_root_abs_path_str,
-        'train': [str(p) for p in train_rel_img_dir_paths],
-        'val': [str(p) for p in val_rel_img_dir_paths],
-        'test': [str(p) for p in test_rel_img_dir_paths],
+        'train': train_rel_img_dir_paths,
+        'val': val_rel_img_dir_paths,
+        'test': test_rel_img_dir_paths,
         'nc': num_classes_val,
         'names': names
     }
@@ -416,9 +461,9 @@ def create_yolo_dataset_yaml(dataset_root_abs_path_str, train_rel_img_dir_paths,
     with open(output_yaml_path_obj, 'w') as f: yaml.dump(data, f, sort_keys=False)
     log.info(f"Successfully created dataset YAML: {output_yaml_path_obj}")
 
-def parse_yolo_annotations(label_file_path, logger_instance=None):
+def parse_yolo_annotations(label_file_path: Union[str, Path], logger_instance: Optional[logging.Logger] = None) -> List[Tuple[int, float, float, float, float]]:
     """Parses a YOLO format label file for detailed annotations."""
-    annotations = []
+    annotations: List[Tuple[int, float, float, float, float]] = []
     if Path(label_file_path).is_file():
         with open(label_file_path, 'r') as f:
             for line in f:
@@ -427,7 +472,7 @@ def parse_yolo_annotations(label_file_path, logger_instance=None):
                     annotations.append((int(parts[0]), *map(float, parts[1:])))
     return annotations
 
-def plot_readable_confusion_matrix(matrix_data, class_names, output_path, title='Confusion Matrix'):
+def plot_readable_confusion_matrix(matrix_data: np.ndarray, class_names: List[str], output_path: Path, title: str = 'Confusion Matrix') -> None:
     """
     Generates and saves a readable confusion matrix plot using Seaborn.
     Handles the case where the matrix includes an extra 'background' class.
@@ -474,12 +519,18 @@ def plot_readable_confusion_matrix(matrix_data, class_names, output_path, title=
     finally:
         plt.close()
 
-def draw_error_annotations(image_np, fp_predictions_to_draw, fn_gt_to_draw, class_names_map, config_module):
+def draw_error_annotations(
+    image_np: np.ndarray, 
+    fp_predictions_to_draw: List[Dict[str, Any]], 
+    fn_gt_to_draw: List[Dict[str, Any]], 
+    class_names_map: Dict[int, str], 
+    config_module: ModuleType
+) -> np.ndarray:
     """Draws specified False Positive and False Negative boxes for error analysis."""
     h, w, _ = image_np.shape
     params = get_adaptive_drawing_params(w, config_module)
-    box_thickness = params['box_thickness']
-    text_thickness = params['text_thickness']
+    box_thickness = int(params['box_thickness'])
+    text_thickness = int(params['text_thickness'])
     fp_font_scale = params['error_fp_font_scale']
     fn_font_scale = params['error_fn_font_scale']
     font = config_module.FONT_FACE
@@ -514,7 +565,7 @@ def draw_error_annotations(image_np, fp_predictions_to_draw, fn_gt_to_draw, clas
 
     return image_np
 
-def calculate_prf1(tp, fp, fn):
+def calculate_prf1(tp: float, fp: float, fn: float) -> Dict[str, float]:
     """
     Calculates precision, recall, and F1-score from TP, FP, and FN counts.
     This is a centralized utility function to avoid code duplication.
@@ -524,7 +575,7 @@ def calculate_prf1(tp, fp, fn):
     f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
     return {'precision': precision, 'recall': recall, 'f1_score': f1_score}
 
-def _get_relative_path_for_yolo_yaml(pairs, inputs_dir):
+def _get_relative_path_for_yolo_yaml(pairs: List[Tuple[Path, Any]], inputs_dir: Path) -> List[str]:
     """
     Gets unique parent directories of images from pairs, relative to a base directory.
     This is a helper for creating dataset.yaml files.

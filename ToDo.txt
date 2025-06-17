@@ -1,3 +1,5 @@
  - support different model, not only YOLO, from ultralytics
  - support not only ultralytics
  - add warnings ig the image angle is far from 90 degrees
+ - support Agorot detection
+ - support foreign coin detection

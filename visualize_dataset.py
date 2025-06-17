@@ -4,6 +4,7 @@ import random
 from pathlib import Path
 import cv2
 import numpy as np
+from typing import List, Tuple, Dict, Any, Optional
 
 # Project-specific modules
 import config
@@ -15,7 +16,7 @@ from utils import (
     get_class_map_from_yaml
 )
 
-def main():
+def main() -> None:
     """
     Main function to run the ground truth visualization process.
     """
@@ -30,24 +31,25 @@ def main():
         default=None, # MODIFIED: Default is now None to signal 'all images'
         help="Number of random images to generate. If not specified, all images in the input folder will be processed."
     )
-    args = parser.parse_args()
+    args: argparse.Namespace = parser.parse_args()
 
     # Create a dedicated output directory for these visualizations
-    output_dir = config.OUTPUT_DIR / "ground_truth_visualizations"
+    output_dir: Path = config.OUTPUT_DIR / "ground_truth_visualizations"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Setup logger
-    log_file_path = output_dir / "visualization_log.log"
-    logger = setup_logging(log_file_path, logger_name='gt_visualizer_logger')
+    log_file_path: Path = output_dir / "visualization_log.log"
+    logger: logging.Logger = setup_logging(log_file_path, logger_name='gt_visualizer_logger')
     logger.info("--- Starting Ground Truth Visualization ---")
     logger.info(f"Output will be saved to: {output_dir}")
 
     # --- Step 1: Load Class Names ---
-    class_names_map = get_class_map_from_yaml(config, logger)
+    class_names_map: Optional[Dict[int, str]] = get_class_map_from_yaml(config, logger)
     if not class_names_map:
         return
 
     # --- Step 2: Discover all image-label pairs ---
+    image_label_pairs: List[Tuple[Path, Path]]
     image_label_pairs, _ = discover_and_pair_image_labels(
         config.INPUTS_DIR, config.IMAGE_SUBDIR_BASENAME, config.LABEL_SUBDIR_BASENAME, logger
     )
@@ -57,6 +59,7 @@ def main():
     logger.info(f"Found a total of {len(image_label_pairs)} image-label pairs.")
 
     # --- Step 3: Select images to process (all by default) ---
+    pairs_to_process: List[Tuple[Path, Path]]
     if args.num_images is None:
         # If no number is specified, process all images
         pairs_to_process = image_label_pairs
@@ -72,7 +75,7 @@ def main():
         logger.debug(f"Processing: {img_path.name}")
         
         # Read the image
-        image_np = cv2.imread(str(img_path))
+        image_np: Optional[np.ndarray] = cv2.imread(str(img_path))
         if image_np is None:
             logger.warning(f"Could not read image {img_path}, skipping.")
             continue
@@ -80,12 +83,12 @@ def main():
         h, w, _ = image_np.shape
         
         # Parse the corresponding YOLO annotation file
-        annotations = parse_yolo_annotations(lbl_path, logger)
+        annotations: List[Tuple[int, float, float, float, float]] = parse_yolo_annotations(lbl_path, logger)
         if not annotations:
             logger.warning(f"No annotations found in {lbl_path}. A blank image will be saved.")
         
         # Convert YOLO format to the format needed by our drawing function
-        ground_truths = []
+        ground_truths: List[Dict[str, Any]] = []
         for cid, cx, cy, cw, ch in annotations:
             # Denormalize coordinates to get pixel values
             x1 = (cx - cw / 2) * w
@@ -95,10 +98,10 @@ def main():
             ground_truths.append({'cls': cid, 'xyxy': [x1, y1, x2, y2]})
 
         # Draw the ground truth boxes on the image
-        annotated_image = draw_ground_truth_boxes(image_np, ground_truths, class_names_map, config)
+        annotated_image: np.ndarray = draw_ground_truth_boxes(image_np, ground_truths, class_names_map, config)
 
         # Save the final annotated image
-        save_path = output_dir / img_path.name
+        save_path: Path = output_dir / img_path.name
         cv2.imwrite(str(save_path), annotated_image)
         processed_count += 1
 

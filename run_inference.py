@@ -7,6 +7,8 @@ import shutil # For copying log file if needed, though now logger writes directl
 from collections import Counter
 import time 
 import datetime 
+from typing import List, Dict, Any, Optional, Tuple
+from types import ModuleType
 
 try:
     import config
@@ -18,6 +20,7 @@ try:
         create_unique_run_dir,
         get_class_map_from_yaml
     )
+    from detector import CoinDetector
 except ImportError as e:
     print(f"ImportError: {e}. Make sure config.py, utils.py, and detector.py are in the same directory or PYTHONPATH")
     exit()
@@ -27,20 +30,21 @@ class InferenceRunner:
     """
     Encapsulates the logic for running inference using a CoinDetector.
     """
-    def __init__(self, detector, logger, current_run_dir, config_module=config):
+    def __init__(self, detector: 'CoinDetector', logger: logging.Logger, current_run_dir: Path, config_module: ModuleType = config) -> None:
         self.detector = detector
         self.logger = logger
         self.config = config_module
         self.current_run_dir = current_run_dir
 
-    def _get_images_to_process(self, input_source_path):
+    def _get_images_to_process(self, input_source_path: Optional[str]) -> List[Path]:
         """Determines the list of image file paths to process."""
-        images_to_process = []
+        images_to_process: List[Path] = []
         image_extensions = ['*.jpg', '*.jpeg', '*.png']
 
+        input_path: Path
         if not input_source_path:
             self.logger.info(f"No input path provided. Defaulting to config.INPUTS_DIR: {self.config.INPUTS_DIR}")
-            input_path = self.config.INPUTS_DIR
+            input_path = Path(self.config.INPUTS_DIR)
         else:
             input_path = Path(input_source_path)
 
@@ -57,18 +61,18 @@ class InferenceRunner:
 
         return images_to_process
 
-    def _calculate_and_log_summary(self, predictions, image_name):
+    def _calculate_and_log_summary(self, predictions: List[Dict[str, Any]], image_name: str) -> None:
         """Calculates and logs the coin counts and total sum for an image."""
         if not predictions:
             self.logger.info(f"Summary for {image_name}: No coins detected.")
             return
 
         # Count occurrences of each coin type
-        coin_counts = Counter(p['class_name'].lower().strip() for p in predictions)
+        coin_counts: Counter = Counter(p['class_name'].lower().strip() for p in predictions)
 
         # Calculate the total monetary value and prepare strings for logging
         total_sum = 0
-        count_strings = []
+        count_strings: List[str] = []
         
         # Sort the detected coins by their monetary value in ascending order
         # The key for sorting is the value from the COIN_VALUES map in config.py
@@ -110,7 +114,7 @@ class InferenceRunner:
         self.logger.info(f"Found {len(images_to_process)} image(s) to process.")
         
         # This list will store all prediction data for the Excel export
-        all_predictions_data = []
+        all_predictions_data: List[Dict[str, Any]] = []
 
         # Setup output directory for annotated images
         annotated_output_dir = self.current_run_dir / "inference_annotated_images"
@@ -127,6 +131,9 @@ class InferenceRunner:
             
             # Get predictions
             predictions = self.detector.predict(image_np, return_raw=False, image_name=image_path.name)
+            if not isinstance(predictions, list): # Ensure predictions is a list
+                self.logger.error("Predict function returned an unexpected type. Skipping.")
+                continue
 
             # Calculate and log the summary of counts and total value
             self._calculate_and_log_summary(predictions, image_path.name)
@@ -156,8 +163,7 @@ class InferenceRunner:
         
         return all_predictions_data
 
-
-def setup_inference():
+def setup_inference() -> Tuple[Optional[logging.Logger], Optional[CoinDetector], Optional[Path]]:
     """
     Sets up a unique run directory, logger, and the detector.
     Returns:
@@ -174,7 +180,7 @@ def setup_inference():
     model_name_prefix = model_path.stem # e.g., "yolov8n_best_direct"
 
     # Create the unique run directory for this inference session
-    base_dir = config.OUTPUT_DIR / "inference_runs"
+    base_dir = Path(config.OUTPUT_DIR) / "inference_runs"
     base_dir.mkdir(parents=True, exist_ok=True) # Ensure base directory exists
     run_name_prefix = f"{model_name_prefix}_inference_run"
     current_run_dir = create_unique_run_dir(base_dir, run_name_prefix)
@@ -201,15 +207,13 @@ def setup_inference():
         return logger, None, current_run_dir
 
     try:
-        detector = create_detector_from_config(
-            model_path, class_names_map, config, logger # Use model_path (Path object)
-        )
+        detector = create_detector_from_config(model_path, class_names_map, config, logger)
         return logger, detector, current_run_dir
     except Exception as e:
         logger.exception(f"A critical error occurred during detector setup: {e}")
         return logger, None, current_run_dir
 
-def main():
+def main() -> None:
     """
     Main function to set up and run the inference process.
     """
