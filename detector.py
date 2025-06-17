@@ -239,6 +239,7 @@ class CoinDetector:
 
         # --- 2. Model Prediction (Raw) ---
         pred_results = self.model.predict(source=preprocessed_image_np, 
+                                            imgsz=self.config.IMG_SIZE,
                                             save=False, 
                                             verbose=False,
                                             conf=self.default_conf_thresh)
@@ -270,7 +271,7 @@ class CoinDetector:
         else:
             return final_predictions 
 
-    def draw_predictions_on_image(self, image_np: np.ndarray, predictions_list: List[Prediction]) -> np.ndarray:
+    def draw_predictions_on_image(self, image_np: np.ndarray, predictions_list: list, show_confidence: bool = True) -> np.ndarray:
         """Draws final predictions on an image using adaptive settings."""
         img_to_draw_on = image_np.copy()
         h, w, _ = img_to_draw_on.shape
@@ -279,7 +280,13 @@ class CoinDetector:
         for pred_data in predictions_list:
             x1, y1, x2, y2 = map(int, pred_data['xyxy'])
             class_name = pred_data['class_name']
-            label = f"{class_name} {pred_data['conf']:.2f}"
+
+            # Use the new parameter to decide which label to create
+            if show_confidence:
+                label = f"{class_name} {pred_data['conf']:.2f}"
+            else:
+                label = class_name
+
             color = self.config.BOX_COLOR_MAP.get(class_name.lower().strip(), self.config.DEFAULT_BOX_COLOR)
 
             cv2.rectangle(img_to_draw_on, (x1, y1), (x2, y2), color, int(params['box_thickness']))

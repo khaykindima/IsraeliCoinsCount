@@ -1,0 +1,12 @@
+# Web App Framework
+flask
+gunicorn
+
+# Core AI/ML Libraries
+ultralytics
+
+# Image & Data Handling
+opencv-python-headless  # Use 'headless' for servers (no GUI)
+pyyaml
+pandas
+openpyxl

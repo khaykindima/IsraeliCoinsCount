@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Coin Detector</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 40px; }
+        h1 { color: #333; }
+        .upload-form { margin-top: 40px; }
+        input[type=file] { padding: 10px; }
+        input[type=submit] { padding: 10px 20px; background-color: #007bff; color: white; border: none; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>Upload an Image of Coins</h1>
+    <form class="upload-form" method="post" action="/predict" enctype="multipart/form-data">
+        <input type="file" name="file" accept="image/png, image/jpeg">
+        <input type="submit" value="Analyze">
+    </form>
+</body>
+</html>

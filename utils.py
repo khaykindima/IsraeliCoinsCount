@@ -7,7 +7,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pandas as pd
-import seaborn as sns
 import matplotlib.pyplot as plt
 from typing import List, Tuple, Dict, Any, Optional, Union
 from types import ModuleType
@@ -477,6 +476,8 @@ def plot_readable_confusion_matrix(matrix_data: np.ndarray, class_names: List[st
     Generates and saves a readable confusion matrix plot using Seaborn.
     Handles the case where the matrix includes an extra 'background' class.
     """
+    import seaborn as sns
+
     logger = logging.getLogger('yolo_script_logger')
     if matrix_data is None:
         logger.warning("Confusion matrix data is None. Skipping plot generation.")
