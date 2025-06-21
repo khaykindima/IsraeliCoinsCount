@@ -127,6 +127,9 @@ PER_CLASS_CONF_THRESHOLDS = {
     "two": 0.5,
     "five": 0.5,
     "ten": 0.8,
+    "10ag": 0.5,
+    "50ag": 0.5,
+    "other": 0.5,
 }
 # --- Aspect Ratio Filtering ---
 ENABLE_ASPECT_RATIO_FILTER = True  # Set to True to enable, False to disable
@@ -139,10 +142,13 @@ ASPECT_RATIO_FILTER_THRESHOLD = 2.1
 # --- Drawing Configuration ---
 # Colors are in BGR format (Blue, Green, Red)
 BOX_COLOR_MAP = {
-    "one": (0, 255, 255),   # Yellow
-    "two": (128, 0, 128),   # Purple
-    "five": (0, 0, 255),    # Red
-    "ten": (255, 255, 0),     # Cyan/Teal
+    "one": (0, 255, 0),       # Bright Green
+    "two": (128, 0, 128),     # Purple
+    "five": (0, 0, 255),      # Red
+    "ten": (255, 100, 0),     # Dark Blue
+    "10ag": (0, 165, 255),    # Orange 
+    "50ag": (255, 255, 0),    # Cyan/Light Blue 
+    "other": (0, 255, 255)    # Yellow
 }
 DEFAULT_BOX_COLOR = (255, 0, 0) # Blue for any other classes not in map
 
@@ -168,4 +174,7 @@ COIN_VALUES = {
     "two": 2,
     "five": 5,
     "ten": 10,
+    "10ag": 0.1,
+    "50ag": 0.5,
+    "other": 0,
 }
