@@ -152,7 +152,8 @@ def create_detector_from_config(model_path: Union[str, Path], class_map: Dict[in
 	
     # Ensure model_path is a Path object before passing to CoinDetector
     model_path_obj = Path(model_path)
-    logger.info(f"Creating detector instance with model: {model_path_obj}")
+    if logger:
+        logger.info(f"Creating detector instance with model: {model_path_obj}")
     
     detector = CoinDetector(
         model_path=model_path_obj,
@@ -426,11 +427,13 @@ def get_class_map_from_yaml(config_module: ModuleType, logger: logging.Logger) -
     class_names_yaml_path = Path(config_module.CLASS_NAMES_YAML)
     names_from_yaml = load_class_names_from_yaml(class_names_yaml_path, logger)
     if names_from_yaml is None:
-        logger.error(f"CRITICAL: Could not load class names from '{class_names_yaml_path}'.")
+        if logger:
+            logger.error(f"CRITICAL: Could not load class names from '{class_names_yaml_path}'.")
         return None
         
     class_names_map = {i: str(name).strip() for i, name in enumerate(names_from_yaml)}
-    logger.info(f"Loaded {len(class_names_map)} class names: {class_names_map}")
+    if logger:
+        logger.info(f"Loaded {len(class_names_map)} class names: {class_names_map}")
     return class_names_map
 
 def create_yolo_dataset_yaml(

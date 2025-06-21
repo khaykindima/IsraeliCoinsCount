@@ -10,7 +10,7 @@ evaluation, and inference without changing the core logic.
 import cv2 # Import for font selection
 
 # --- Base Paths ---
-INPUTS_DIR = "Data/CoinCountv54_plus640size"
+INPUTS_DIR = "Data/CoinCountV1"
 
 # Example of a flexible, nested structure now supported:
 # The script will recursively find all sibling 'images' and 'labels' folders.
@@ -76,20 +76,20 @@ ENABLE_BLUR_DETECTION = False
 BLUR_DETECTION_THRESHOLD = 100.0
 
 # Darkness Detection
-ENABLE_DARKNESS_DETECTION = True
+ENABLE_DARKNESS_DETECTION = False
 # Images with an average pixel intensity below this threshold will be flagged as too dark.
 # The value ranges from 0 (completely black) to 255 (completely white).
 DARKNESS_DETECTION_THRESHOLD = 50.0
 
 # Sharp Angle Detection (based on object aspect ratios)
-ENABLE_SHARP_ANGLE_DETECTION = True
+ENABLE_SHARP_ANGLE_DETECTION = False
 # Threshold for an individual box's aspect ratio (longer side / shorter side) to be considered suspicious.
 SHARP_ANGLE_AR_THRESHOLD = 2.5
 # If this percentage of detected boxes exceed the AR threshold, a warning for the whole image is logged.
 SHARP_ANGLE_MIN_PERCENTAGE = 50.0
 
 # Cut-off Coin Detection
-ENABLE_CUT_OFF_CHECK = True
+ENABLE_CUT_OFF_CHECK = False
 # Defines how close a box edge needs to be to the image edge to be flagged (in pixels).
 CUT_OFF_TOLERANCE = 2
 
