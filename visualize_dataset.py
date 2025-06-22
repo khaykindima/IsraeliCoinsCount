@@ -13,7 +13,8 @@ from utils import (
     discover_and_pair_image_labels,
     parse_yolo_annotations,
     draw_ground_truth_boxes,
-    get_class_map_from_yaml
+    get_class_map_from_yaml,
+    create_unique_run_dir
 )
 
 def main() -> None:
@@ -22,7 +23,7 @@ def main() -> None:
     """
     # Convert string paths from config to Path objects for the rest of the script
     config.INPUTS_DIR = Path(config.INPUTS_DIR)
-    config.OUTPUT_DIR = Path(config.OUTPUT_DIR)
+    config.OUTPUT_DIR = Path(config.OUTPUT_DIR).resolve()
     
     parser = argparse.ArgumentParser(description="Visualize ground truth labels on images from the dataset.")
     parser.add_argument(
@@ -33,9 +34,10 @@ def main() -> None:
     )
     args: argparse.Namespace = parser.parse_args()
 
-    # Create a dedicated output directory for these visualizations
-    output_dir: Path = config.OUTPUT_DIR / "ground_truth_visualizations"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Create a unique, numbered output directory 
+    base_output_dir = config.OUTPUT_DIR / "ground_truth_visualizations"
+    run_name_prefix = "visualize_run"
+    output_dir = create_unique_run_dir(base_output_dir, run_name_prefix)
 
     # Setup logger
     log_file_path: Path = output_dir / "visualization_log.log"
