@@ -389,63 +389,81 @@ def discover_and_pair_image_labels(
 ImageLabelPair = Tuple[Path, Path]
 
 def split_data(
-    image_label_pairs: List[ImageLabelPair], 
-    train_ratio: float, 
-    val_ratio: float, 
-    test_ratio: float, 
-    seed: int = 42, 
+    image_label_pairs: List[ImageLabelPair],
+    train_ratio: float,
+    val_ratio: float,
+    test_ratio: float,
+    seed: int = 42,
     logger_instance: Optional[logging.Logger] = None
 ) -> Tuple[List[ImageLabelPair], List[ImageLabelPair], List[ImageLabelPair]]:
     """
     Splits image-label pairs into train, validation, and test sets.
-    This version includes special handling for small datasets for debugging.
+    This version ensures that train, valid, and test sets have at least one
+    file if the total number of images is sufficient, overriding ratios if necessary.
     """
     log = logger_instance if logger_instance else logging.getLogger(__name__)
     total = len(image_label_pairs)
-    
-    # Ensure list is shuffled before any operations
-    random.seed(seed)
-    random.shuffle(image_label_pairs)
 
     if total == 0:
         log.warning("No image-label pairs provided to split_data function.")
         return [], [], []
 
-    # --- Special handling for small datasets as requested ---
-    if total == 1:
-        log.warning("Only one image found. Assigning it to train, validation for debugging.")
-        return image_label_pairs, image_label_pairs, []
+    random.seed(seed)
+    random.shuffle(image_label_pairs)
 
-    if total == 2:
-        log.warning("Only two images found. Assigning one to train and one to validation.")
-        return [image_label_pairs[0]], [image_label_pairs[1]], []
-    
-    # --- Robust logic for 3 or more images ---
-    # This ensures that validation set gets at least one image
-    log.info(f"Splitting {total} images into train/val/test sets based on ratios.")
-    val_count = max(1, int(total * val_ratio))
-    test_count = int(total * test_ratio) # Test set can be empty if ratio is low
-    
-    # The rest goes to training
-    train_count = total - val_count - test_count
-    
-    # In the rare case train count becomes zero or negative (if val+test ratios are >= 1)
-    if train_count < 1:
-        log.error("Train, validation, and test ratios sum to > 1.0. Adjusting to ensure at least one training image.")
-        # Fallback to ensure at least one train image
-        train_count = 1
-        val_count = max(1, total - 1 - test_count) # Recalculate val count
-        if val_count + test_count >= total: # Edge case for tiny N
-             val_count = total - 1 - test_count
-             if val_count < 1: val_count = 0
+    # --- Handle all cases to ensure each set has at least one file if possible ---
 
+    if total < 3:
+        log.warning(f"Dataset size is very small ({total} images). Duplicating images across sets to allow the pipeline to run.")
+        if total == 1:
+            # If only 1 image, use it for all sets
+            return image_label_pairs, image_label_pairs, image_label_pairs
+        if total == 2:
+            # If 2 images, use one for train, one for valid, and duplicate one for test
+            return [image_label_pairs[0]], [image_label_pairs[1]], [image_label_pairs[1]]
 
-    train_set = image_label_pairs[:train_count]
-    val_set = image_label_pairs[train_count : train_count + val_count]
-    test_set = image_label_pairs[train_count + val_count :]
+    # For total >= 3, we can guarantee each set gets at least one image.
+    # We will prioritize train and valid sets, then adjust to ensure test is not empty.
     
+    # Use round() for a better distribution with small numbers
+    train_count = round(total * train_ratio)
+    val_count = round(total * val_ratio)
+    
+    # Initial assignments based on rounding
+    counts = {
+        'train': train_count,
+        'val': val_count,
+        'test': total - train_count - val_count
+    }
+
+    # Ensure train, valid, and test have at least 1 file if N>=3
+    # If a set is empty, borrow from the largest set.
+    sets_to_guarantee = ['train', 'valid', 'test']
+    for set_name in sets_to_guarantee:
+        if counts[set_name] <= 0:
+            largest_set_name = max(counts, key=counts.get)
+            if counts[largest_set_name] > 1:
+                log.warning(
+                    f"'{set_name}' set was empty based on ratios. "
+                    f"Overriding ratios to guarantee at least one file. Borrowing from '{largest_set_name}' set."
+                )
+                counts[largest_set_name] -= 1
+                counts[set_name] += 1
+
+    # Final counts after adjustment
+    final_train_count = counts['train']
+    final_val_count = counts['val']
+
+    train_set = image_label_pairs[:final_train_count]
+    val_set = image_label_pairs[final_train_count : final_train_count + final_val_count]
+    test_set = image_label_pairs[final_train_count + final_val_count :]
+
+    # Final safety check in case test set ended up empty after adjustments
+    if not test_set:
+        log.warning("Test set was empty after adjustments, duplicating validation file for test set.")
+        test_set = [val_set[-1]] # Use the last validation file
+
     return train_set, val_set, test_set
-
 
 def load_class_names_from_yaml(yaml_path_obj: Path, logger_instance: Optional[logging.Logger] = None) -> Optional[List[str]]:
     """Loads the 'names' list from a YAML file."""
