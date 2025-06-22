@@ -438,7 +438,7 @@ def split_data(
 
     # Ensure train, valid, and test have at least 1 file if N>=3
     # If a set is empty, borrow from the largest set.
-    sets_to_guarantee = ['train', 'valid', 'test']
+    sets_to_guarantee = ['train', 'val', 'test']
     for set_name in sets_to_guarantee:
         if counts[set_name] <= 0:
             largest_set_name = max(counts, key=counts.get)
@@ -459,9 +459,14 @@ def split_data(
     test_set = image_label_pairs[final_train_count + final_val_count :]
 
     # Final safety check in case test set ended up empty after adjustments
-    if not test_set:
-        log.warning("Test set was empty after adjustments, duplicating validation file for test set.")
-        test_set = [val_set[-1]] # Use the last validation file
+    if not test_set and val_set:
+        log.warning("Test set was empty after adjustments, duplicating a validation file for test set.")
+        test_set = [val_set[-1]]
+    
+    # Final check in case val_set is also empty
+    if not val_set and train_set:
+        log.warning("Validation set was empty after adjustments, duplicating a training file for validation set.")
+        val_set = [train_set[-1]]
 
     return train_set, val_set, test_set
 
