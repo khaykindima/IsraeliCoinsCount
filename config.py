@@ -10,7 +10,7 @@ evaluation, and inference without changing the core logic.
 import cv2 # Import for font selection
 
 # --- Base Paths ---
-INPUTS_DIR = "Data/CoinCountV1"
+INPUTS_DIR = "Data/CoinCountV2"
 
 # Example of a flexible, nested structure now supported:
 # The script will recursively find all sibling 'images' and 'labels' folders.
@@ -52,7 +52,7 @@ MODEL_NAME_FOR_TRAINING = "BestModels/yolov8n_v6.pt"
 MODEL_PATH_FOR_PREDICTION = "BestModels/yolov8n_v6.pt"
 
 # --- Training Parameters ---
-EPOCHS = 0 # Set to >0 for training, 0 for prediction/evaluation only using prediction model
+EPOCHS = 1 # Set to >0 for training, 0 for prediction/evaluation only using prediction model
 IMG_SIZE = 640
 TRAINING_OPTIMIZER = 'Adam' # Default is 'SGD', or 'AdamW'
 TRAINING_LR0 = 0.0001 # Initial learning rate
@@ -129,7 +129,6 @@ PER_CLASS_CONF_THRESHOLDS = {
     "ten": 0.8,
     "10ag": 0.5,
     "50ag": 0.5,
-    "other": 0.5,
 }
 # --- Aspect Ratio Filtering ---
 ENABLE_ASPECT_RATIO_FILTER = True  # Set to True to enable, False to disable
@@ -148,7 +147,6 @@ BOX_COLOR_MAP = {
     "ten": (255, 100, 0),     # Dark Blue
     "10ag": (0, 165, 255),    # Orange 
     "50ag": (255, 255, 0),    # Cyan/Light Blue 
-    "other": (0, 255, 255)    # Yellow
 }
 DEFAULT_BOX_COLOR = (255, 0, 0) # Blue for any other classes not in map
 
@@ -176,5 +174,4 @@ COIN_VALUES = {
     "ten": 10,
     "10ag": 0.1,
     "50ag": 0.5,
-    "other": 0,
 }
