@@ -10,7 +10,7 @@ evaluation, and inference without changing the core logic.
 import cv2 # Import for font selection
 
 # --- Base Paths ---
-INPUTS_DIR = "Data/CoinCountV2"
+INPUTS_DIR = "Data/CoinCountv59"
 
 # Example of a flexible, nested structure now supported:
 # The script will recursively find all sibling 'images' and 'labels' folders.
