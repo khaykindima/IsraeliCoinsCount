@@ -163,6 +163,7 @@ def run_training_workflow(
 		lrf=config.TRAINING_LRF,
         exist_ok=True, # Set to True to use our pre-created unique directory
         save_period=1,
+        cache='ram',
         freeze=False,
 		**config.AUGMENTATION_PARAMS)
         
