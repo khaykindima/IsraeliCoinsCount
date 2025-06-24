@@ -48,8 +48,8 @@ METRICS_JSON_NAME = "final_evaluation_metrics.json" # Name for the metrics JSON 
 CONFUSION_MATRIX_PLOT_NAME = "confusion_matrix.png" # Filename for the saved plot
 
 # --- Model Configuration ---
-MODEL_NAME_FOR_TRAINING = "BestModels/yolov8n_v6.pt"
-MODEL_PATH_FOR_PREDICTION = "BestModels/yolov8n_v6.pt"
+MODEL_NAME_FOR_TRAINING = "deployed.pt"
+MODEL_PATH_FOR_PREDICTION = "deployed.pt"
 
 # --- Training Parameters ---
 EPOCHS = 1 # Set to >0 for training, 0 for prediction/evaluation only using prediction model
