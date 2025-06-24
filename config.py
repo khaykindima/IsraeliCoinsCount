@@ -10,7 +10,7 @@ evaluation, and inference without changing the core logic.
 import cv2 # Import for font selection
 
 # --- Base Paths ---
-INPUTS_DIR = "Data/CoinCountv59"
+INPUTS_DIR = "Data/IsraeliCoinsV66"
 
 # Example of a flexible, nested structure now supported:
 # The script will recursively find all sibling 'images' and 'labels' folders.
@@ -52,7 +52,7 @@ MODEL_NAME_FOR_TRAINING = "deployed.pt"
 MODEL_PATH_FOR_PREDICTION = "deployed.pt"
 
 # --- Training Parameters ---
-EPOCHS = 1 # Set to >0 for training, 0 for prediction/evaluation only using prediction model
+EPOCHS = 0 # Set to >0 for training, 0 for prediction/evaluation only using prediction model
 IMG_SIZE = 640
 TRAINING_OPTIMIZER = 'Adam' # Default is 'SGD', or 'AdamW'
 TRAINING_LR0 = 0.0001 # Initial learning rate
