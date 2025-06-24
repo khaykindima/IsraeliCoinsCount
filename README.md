@@ -6,17 +6,17 @@
 
 A comprehensive computer vision project to detect and classify Israeli coins 
 
-<img src="images/10Ag.jpg" height="40"> **10 Agorot**
+<img src="ReadmeImages/10Ag.jpg" height="40"> **10 Agorot**
 
-<img src="images/50Ag.jpg" height="40"> **50 Agorot**
+<img src="ReadmeImages/50Ag.jpg" height="40"> **50 Agorot**
 
-<img src="images/1Sh.jpg" height="40"> **1 Shekel**
+<img src="ReadmeImages/1Sh.jpg" height="40"> **1 Shekel**
 
-<img src="images/2Sh.jpg" height="40"> **2 Shekels**
+<img src="ReadmeImages/2Sh.jpg" height="40"> **2 Shekels**
 
-<img src="images/5Sh.jpg" height="40"> **5 Shekels**
+<img src="ReadmeImages/5Sh.jpg" height="40"> **5 Shekels**
 
-<img src="images/10Sh.jpeg" height="40"> **10 Shekels**
+<img src="ReadmeImages/10Sh.jpeg" height="40"> **10 Shekels**
 
 using YOLOv8.
 
