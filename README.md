@@ -4,7 +4,7 @@
 ![Framework](https://img.shields.io/badge/YOLO-v8-blueviolet.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-A comprehensive computer vision project to detect and classify Israeli coins 
+A comprehensive computer vision project to detect and classify Israeli coins using YOLOv8.
 
 <img src="ReadmeImages/10Ag.jpg" height="40"> **10 Agorot**
 
@@ -18,7 +18,7 @@ A comprehensive computer vision project to detect and classify Israeli coins
 
 <img src="ReadmeImages/10Sh.jpeg" height="40"> **10 Shekels**
 
-using YOLOv8.
+
 
 ## Table of Contents
 - [Demo](#demo)
@@ -94,6 +94,7 @@ The current recommended model for direct evaluation and inference is `deployed.p
 
 The project will recursively find all sibling `images` and `labels` folders within the `INPUTS_DIR`. The project's data handling logic is flexible to accommodate nested structures.
 
+```
 IsraeliCoinsCount/
 ├── Data/                     # Root folder for input datasets
 │   └── IsraeliCoinsV66/
@@ -119,6 +120,7 @@ IsraeliCoinsCount/
 ├── ultralytics_wsl_env.yml   # Conda environment for Linux/WSL
 ├── ultralytics_win_env.yml   # Conda environment for Windows
 └── ... (other project scripts)
+```
 
 This project can be set up on either WSL (Linux) or native Windows. Please follow the instructions for your specific operating system.
 
