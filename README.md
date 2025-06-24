@@ -5,12 +5,12 @@
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
 A comprehensive computer vision project to detect and classify Israeli coins 
-(<strong>10 Agorot</strong> <img src="ReadmeImages/10ag.jpg" height="30">, 
-<strong>50 Agorot</strong> <img src="ReadmeImages/50ag.jpg" height="30">, 
-<strong>1 Shekel</strong> <img src="ReadmeImages/1nis.jpg" height="30">, 
-<strong>2 Shekels</strong> <img src="ReadmeImages/2nis.jpg" height="30">, 
-<strong>5 Shekels</strong> <img src="ReadmeImages/5nis.jpg" height="30">, and 
-<strong>10 Shekels</strong> <img src="ReadmeImages/10nis.jpeg" height="30">) 
+(<strong>10 Agorot</strong> <img src="ReadmeImages/10Ag.jpg" height="30">, 
+<strong>50 Agorot</strong> <img src="ReadmeImages/50Ag.jpg" height="30">, 
+<strong>1 Shekel</strong> <img src="ReadmeImages/1Sh.jpg" height="30">, 
+<strong>2 Shekels</strong> <img src="ReadmeImages/2Sh.jpg" height="30">, 
+<strong>5 Shekels</strong> <img src="ReadmeImages/5Sh.jpg" height="30">, and 
+<strong>10 Shekels</strong> <img src="ReadmeImages/10Sh.jpeg" height="30">) 
 using YOLOv8.
 
 ## Table of Contents
