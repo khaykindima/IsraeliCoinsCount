@@ -4,7 +4,7 @@
 ![Framework](https://img.shields.io/badge/YOLO-v8-blueviolet.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-A comprehensive computer vision project to detect and classify Israeli coins (10 Agorot <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/82/10_ag_o.png/40px-10_ag_o.png" alt="10 Agorot coin" height="20" style="vertical-align:middle;">, 50 Agorot <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/f/f9/50_ag_o.png/44px-50_ag_o.png" alt="50 Agorot coin" height="20" style="vertical-align:middle;">, 1 Shekel <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/1_nis_o.png/41px-1_nis_o.png" alt="1 Shekel coin" height="20" style="vertical-align:middle;">, 2 Shekels <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/2_nis_o.png/44px-2_nis_o.png" alt="2 Shekels coin" height="20" style="vertical-align:middle;">, 5 Shekels <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/5_nis_o.png/47px-5_nis_o.png" alt="5 Shekels coin" height="20" style="vertical-align:middle;">, and 10 Shekels <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/10_nis_o.png/47px-10_nis_o.png" alt="10 Shekels coin" height="20" style="vertical-align:middle;">) using YOLOv8. The project includes a full pipeline from data preprocessing and training to in-depth model evaluation and inference.
+A comprehensive computer vision project to detect and classify Israeli coins (10 Agorot <img src="https://images.weserv.nl/?url=upload.wikimedia.org/wikipedia/commons/8/82/10_ag_o.png&h=20" alt="10 Agorot coin">, 50 Agorot <img src="https://images.weserv.nl/?url=upload.wikimedia.org/wikipedia/commons/f/f9/50_ag_o.png&h=20" alt="50 Agorot coin">, 1 Shekel <img src="https://images.weserv.nl/?url=upload.wikimedia.org/wikipedia/commons/e/e4/1_nis_o.png&h=20" alt="1 Shekel coin">, 2 Shekels <img src="https://images.weserv.nl/?url=upload.wikimedia.org/wikipedia/commons/0/05/2_nis_o.png&h=20" alt="2 Shekels coin">, 5 Shekels <img src="https://images.weserv.nl/?url=upload.wikimedia.org/wikipedia/commons/d/d3/5_nis_o.png&h=20" alt="5 Shekels coin">, and 10 Shekels <img src="https://images.weserv.nl/?url=upload.wikimedia.org/wikipedia/commons/9/97/10_nis_o.png&h=20" alt="10 Shekels coin">) using YOLOv8. The project includes a full pipeline from data preprocessing and training to in-depth model evaluation and inference.
 
 ## Table of Contents
 - [Demo](#demo)
@@ -80,8 +80,31 @@ The current recommended model for direct evaluation and inference is `deployed.p
 
 The project will recursively find all sibling `images` and `labels` folders within the `INPUTS_DIR`. The project's data handling logic is flexible to accommodate nested structures.
 
-IsraeliCoinsCount/├── Data/│   └── IsraeliCoinsV66/│       ├── data.yaml│       ├── session_1_daylight/│       │   ├── images/│       │   │   └── img1.jpg│       │   └── labels/│       │       └── img1.txt│       └── session_2_indoor/│           └── setup_A/│               ├── images/│               │   └── img2.jpg│               └── labels/│                   └── img2.txt├── README.md├── .gitignore├── config.py├── deployed.pt├── train.py├── utils.py└── ... (other project files)
-## Setup and Installation
+IsraeliCoinsCount/
+├── Data/                     # Root folder for input datasets
+│   └── IsraeliCoinsV66/
+│       ├── data.yaml
+│       ├── session_1_daylight/
+│       │   ├── images/
+│       │   │   └── img1.jpg
+│       │   └── labels/
+│       │       └── img1.txt
+│       └── ...
+├── experiment_results/       # Root folder for all outputs (not tracked by Git)
+│   ├── direct_evaluation_runs/
+│   ├── ground_truth_visualizations/
+│   ├── inference_runs/
+│   └── training_runs/
+├── .gitignore
+├── README.md
+├── classes_names.yaml        # Defines the class names and their order
+├── config.py                 # Central configuration for all scripts
+├── deployed.pt               # The recommended, pre-trained model
+├── train.py                  # Main script for training and evaluation
+├── run_inference.py          # Script to run inference on new images
+├── ultralytics_wsl_env.yml   # Conda environment for Linux/WSL
+├── ultralytics_win_env.yml   # Conda environment for Windows
+└── ... (other project scripts)
 
 This project can be set up on either WSL (Linux) or native Windows. Please follow the instructions for your specific operating system.
 
