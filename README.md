@@ -4,7 +4,14 @@
 ![Framework](https://img.shields.io/badge/YOLO-v8-blueviolet.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-A comprehensive computer vision project to detect and classify Israeli coins (<strong>10 Agorot</strong> <img src="https://upload.wikimedia.org/wikipedia/commons/8/82/10_ag_o.png" height="30">, <strong>50 Agorot</strong> <img src="https://upload.wikimedia.org/wikipedia/commons/f/f9/50_ag_o.png" height="30">, <strong>1 Shekel</strong> <img src="https://upload.wikimedia.org/wikipedia/commons/e/e4/1_nis_o.png" height="30">, <strong>2 Shekels</strong> <img src="https://upload.wikimedia.org/wikipedia/commons/0/05/2_nis_o.png" height="30">, <strong>5 Shekels</strong> <img src="https://upload.wikimedia.org/wikipedia/commons/d/d3/5_nis_o.png" height="30">, and <strong>10 Shekels</strong> <img src="https://upload.wikimedia.org/wikipedia/commons/9/97/10_nis_o.png" height="30">) using YOLOv8. The project includes a full pipeline from data preprocessing and training to in-depth model evaluation and inference.
+A comprehensive computer vision project to detect and classify Israeli coins 
+(<strong>10 Agorot</strong> <img src="https://upload.wikimedia.org/wikipedia/commons/8/82/10_ag_o.png" height="30">, 
+<strong>50 Agorot</strong> <img src="https://upload.wikimedia.org/wikipedia/commons/f/f9/50_ag_o.png" height="30">, 
+<strong>1 Shekel</strong> <img src="https://upload.wikimedia.org/wikipedia/commons/e/e4/1_nis_o.png" height="30">, 
+<strong>2 Shekels</strong> <img src="https://upload.wikimedia.org/wikipedia/commons/0/05/2_nis_o.png" height="30">, 
+<strong>5 Shekels</strong> <img src="https://upload.wikimedia.org/wikipedia/commons/d/d3/5_nis_o.png" height="30">, and 
+<strong>10 Shekels</strong> <img src="https://upload.wikimedia.org/wikipedia/commons/9/97/10_nis_o.png" height="30">) 
+using YOLOv8. The project includes a full pipeline from data preprocessing and training to in-depth model evaluation and inference.
 
 ## Table of Contents
 - [Demo](#demo)
